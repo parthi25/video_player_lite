@@ -116,8 +116,6 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
-    final bool isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
     return Positioned(
       top: 0,
       left: 0,
@@ -160,9 +158,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
             ),
             const SizedBox(height: 8),
             Align(
-              alignment: isLandscape
-                  ? Alignment.centerLeft
-                  : Alignment.centerRight,
+              alignment: Alignment.centerLeft,
               child: _buildActionRibbon(videoState, videoController),
             ),
           ],

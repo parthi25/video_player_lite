@@ -5,7 +5,6 @@ import 'package:media_kit_video/media_kit_video.dart';
 import '../core/video_player_controller.dart';
 import '../services/performance_service.dart';
 import '../services/system_controls_service.dart';
-import '../services/video_format_service.dart';
 import 'next_player_controls.dart';
 import 'next_gesture_detector.dart';
 import 'subtitle_display_widget.dart';
@@ -44,11 +43,7 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final videoState = ref.read(videoPlayerControllerProvider);
-      if (videoState.type == MediaType.audio) {
-        _resetOrientation();
-      } else {
-        _applyOrientation(videoState.orientation);
-      }
+      _applyOrientation(videoState.orientation);
     });
   }
 
@@ -163,18 +158,9 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
                                 (s) => s.videoController,
                               ),
                             );
-                            final mediaType = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.type,
-                              ),
-                            );
 
                             if (videoController == null) {
                               return const SizedBox.shrink();
-                            }
-
-                            if (mediaType == MediaType.audio) {
-                              return _buildAudioPlayerUI();
                             }
 
                             Widget videoWidget = Video(
@@ -185,8 +171,7 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
                               height: double.infinity,
                             );
 
-                            if (currentRatio > 0 &&
-                                mediaType == MediaType.video) {
+                            if (currentRatio > 0) {
                               return AspectRatio(
                                 aspectRatio: currentRatio,
                                 child: videoWidget,
@@ -264,47 +249,6 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
       child: const Center(
         child: CircularProgressIndicator(
           valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildAudioPlayerUI() {
-    return Container(
-      color: Colors.black,
-      width: double.infinity,
-      height: double.infinity,
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Container(
-              width: 200,
-              height: 200,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: LinearGradient(
-                  colors: [Colors.red.shade900, Colors.red.shade400],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-              ),
-              child: const Icon(
-                Icons.music_note_rounded,
-                size: 100,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 40),
-            const Text(
-              'Playing Audio',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
         ),
       ),
     );
