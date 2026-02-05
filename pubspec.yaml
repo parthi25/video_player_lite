@@ -31,51 +31,47 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # The following adds the Cupertino Icons font to your application.
-  # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   
-  # Video player with hardware acceleration support
-  video_player: ^2.8.6
+  # Minimal video player - media_kit with native hardware decoding
+  media_kit: ^1.2.6
+  media_kit_video: ^1.3.1
+  media_kit_libs_video: ^1.0.7
   
-  # State management
-  flutter_riverpod: ^2.5.1
+  # Lightweight state management
+  flutter_riverpod: ^2.6.1
   
-  # File picker for local video files
-  file_picker: ^8.0.3
+  # Essential file/storage access
+  file_picker: ^8.3.7
+  path_provider: ^2.1.5
+  permission_handler: ^11.4.0
+  shared_preferences: ^2.5.4
   
-  # Storage access
-  path_provider: ^2.1.3
-  
-  # File system access for browsing
-  permission_handler: ^11.3.1
-  
-  # Device info for performance optimization
-  device_info_plus: ^12.3.0
-  
-  # Network connectivity
-  connectivity_plus: ^6.0.3
-  
-  # System controls (brightness/volume)
-  wakelock_plus: ^1.2.5
-  
-  # Subtitle parsing
+  # Minimal utilities
+  path: ^1.9.1
   subtitle: ^0.1.4
   
-  # Shared preferences for settings
-  shared_preferences: ^2.2.3
+  # PiP support (Picture-in-Picture)
+  floating: ^6.0.0
   
-  # URL launcher for external links
-  url_launcher: ^6.2.4
+  # URL launcher
+  url_launcher: ^6.3.1
   
-  # Path manipulation
-  path: ^1.8.3
+  # Video editing (Community fork - original package retired)
+  ffmpeg_kit_flutter_new: ^4.1.0
   
-  # Crypto for password hashing
-  crypto: ^3.0.3
+  # Device info and connectivity
+  device_info_plus: ^12.3.0
+  connectivity_plus: ^6.1.5
+  wakelock_plus: ^1.2.9
   
-  # Encryption for secure video storage
+  # Encryption and security
+  convert: ^3.1.2
+  crypto: ^3.0.7
   encrypt: ^5.0.3
+  
+  # HTTP requests for streaming and network operations
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_test:

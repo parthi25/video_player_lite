@@ -5,6 +5,7 @@ class VideoFormat {
   final List<String> commonCodecs;
   final bool isSupported;
   final String? notes;
+  final MediaType type;
 
   const VideoFormat({
     required this.extension,
@@ -12,9 +13,12 @@ class VideoFormat {
     required this.mimeTypes,
     required this.commonCodecs,
     required this.isSupported,
+    this.type = MediaType.video,
     this.notes,
   });
 }
+
+enum MediaType { video, audio, streaming }
 
 class VideoFormatService {
   static const List<VideoFormat> supportedFormats = [
@@ -198,6 +202,90 @@ class VideoFormatService {
       isSupported: false,
       notes: 'Limited support',
     ),
+
+    VideoFormat(
+      extension: 'm3v',
+      name: 'M3V Video',
+      mimeTypes: ['video/x-m3v'],
+      commonCodecs: ['MPEG-4'],
+      isSupported: true,
+      notes: 'M3V video format',
+    ),
+    // Audio formats
+    VideoFormat(
+      extension: 'mp3',
+      name: 'MP3 Audio',
+      mimeTypes: ['audio/mpeg'],
+      commonCodecs: ['MP3'],
+      isSupported: true,
+      type: MediaType.audio,
+      notes: 'Standard audio format',
+    ),
+    VideoFormat(
+      extension: 'wav',
+      name: 'WAV Audio',
+      mimeTypes: ['audio/wav'],
+      commonCodecs: ['PCM'],
+      isSupported: true,
+      type: MediaType.audio,
+      notes: 'Uncompressed audio format',
+    ),
+    VideoFormat(
+      extension: 'm4a',
+      name: 'M4A Audio',
+      mimeTypes: ['audio/mp4', 'audio/x-m4a'],
+      commonCodecs: ['AAC', 'ALAC'],
+      isSupported: true,
+      type: MediaType.audio,
+      notes: 'Apple audio format',
+    ),
+    VideoFormat(
+      extension: 'ogg',
+      name: 'Ogg Audio',
+      mimeTypes: ['audio/ogg'],
+      commonCodecs: ['Vorbis', 'Opus'],
+      isSupported: true,
+      type: MediaType.audio,
+      notes: 'Open source audio',
+    ),
+    VideoFormat(
+      extension: 'flac',
+      name: 'FLAC Audio',
+      mimeTypes: ['audio/flac'],
+      commonCodecs: ['FLAC'],
+      isSupported: true,
+      type: MediaType.audio,
+      notes: 'Lossless audio format',
+    ),
+    VideoFormat(
+      extension: 'aac',
+      name: 'AAC Audio',
+      mimeTypes: ['audio/aac'],
+      commonCodecs: ['AAC'],
+      isSupported: true,
+      type: MediaType.audio,
+      notes: 'Advanced Audio Coding',
+    ),
+
+    // Streaming formats
+    VideoFormat(
+      extension: 'm3u8',
+      name: 'HLS Stream',
+      mimeTypes: ['application/x-mpegURL', 'application/vnd.apple.mpegurl'],
+      commonCodecs: ['H.264', 'AAC'],
+      isSupported: true,
+      type: MediaType.streaming,
+      notes: 'HTTP Live Streaming',
+    ),
+    VideoFormat(
+      extension: 'm3u',
+      name: 'M3U Playlist',
+      mimeTypes: ['audio/x-mpegurl'],
+      commonCodecs: [],
+      isSupported: true,
+      type: MediaType.streaming,
+      notes: 'Multimedia playlist format',
+    ),
   ];
 
   static VideoFormat? getFormatByExtension(String extension) {
@@ -281,8 +369,18 @@ class VideoFormatService {
     if (format == null) return false;
 
     // Consider these formats as streaming optimized
-    final streamingFormats = ['mp4', 'webm', 'm4v'];
+    final streamingFormats = ['mp4', 'webm', 'm4v', 'm3u8', 'm3u'];
     return streamingFormats.contains(format.extension.toLowerCase());
+  }
+
+  static bool isAudio(String filePath) {
+    final format = getFormatByPath(filePath);
+    return format?.type == MediaType.audio;
+  }
+
+  static bool isStreaming(String filePath) {
+    final format = getFormatByPath(filePath);
+    return format?.type == MediaType.streaming;
   }
 
   static String getQualityIndicator(String filePath) {

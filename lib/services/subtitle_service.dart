@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as path;
+import 'subtitle_downloader_service.dart';
 
 class SubtitleTrack {
   final String path;
@@ -306,13 +308,49 @@ class SubtitleService {
   static SubtitleTrack? get currentTrack => _currentTrack;
   static List<SubtitleEntry>? get currentSubtitles => _currentSubtitles;
 
-  static Future<void> downloadSubtitle(
+  static Future<String?> downloadSubtitle(
     String videoPath,
     String language,
   ) async {
-    // TODO: Implement subtitle download from online sources
-    // This would integrate with services like OpenSubtitles
-    debugPrint('Downloading subtitle for $videoPath in $language');
+    try {
+      // Get video file name without extension for better search
+      final fileName = path.basenameWithoutExtension(videoPath);
+
+      // Search for subtitles online
+      final results = await SubtitleDownloaderService.searchSubtitles(
+        query: fileName,
+        language: language,
+      );
+
+      if (results.isNotEmpty) {
+        // Get the best match (highest rated and most downloaded)
+        results.sort((a, b) {
+          final scoreA = a.rating * a.downloads;
+          final scoreB = b.rating * b.downloads;
+          return scoreB.compareTo(scoreA);
+        });
+
+        final bestMatch = results.first;
+
+        // Download the subtitle
+        final downloadedPath =
+            await SubtitleDownloaderService.downloadAndSaveSubtitle(
+              subtitle: bestMatch,
+              outputDirectory: path.dirname(videoPath),
+            );
+
+        if (downloadedPath != null) {
+          debugPrint('Subtitle downloaded successfully: $downloadedPath');
+          return downloadedPath;
+        }
+      }
+
+      debugPrint('No subtitles found for $videoPath in $language');
+      return null;
+    } catch (e) {
+      debugPrint('Error downloading subtitle: $e');
+      return null;
+    }
   }
 
   static Map<String, String> getLanguageCodes() {

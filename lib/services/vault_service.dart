@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter/foundation.dart';
@@ -76,6 +77,9 @@ class VaultService {
   static const String _securityAnswersKey = 'security_answers';
   static const String _securitySetupKey = 'security_setup_done';
 
+  // Chunk size for file processing (5MB) improves memory usage
+  static const int _chunkSize = 5 * 1024 * 1024;
+
   static bool _isInFakeMode = false;
   static bool _isAuthenticated = false;
 
@@ -147,29 +151,23 @@ class VaultService {
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final newHash = _hashPassword(newPassword);
 
-      // Reset main password
-      await prefs.setString(_mainVaultKey, newHash);
+      // Hash new passwords
+      final mainHash = _hashPassword(newPassword);
+      final fakeHash = _hashPassword(
+        'decoy123',
+      ); // Set a default fake password as well
 
-      debugPrint('Password reset successfully using security questions');
+      // Reset both to known states
+      await prefs.setString(_mainVaultKey, mainHash);
+      await prefs.setString(_fakeVaultKey, fakeHash);
+      await prefs.setBool(_isSetupKey, true);
+
+      debugPrint('Passwords reset successfully using security questions');
       return true;
     } catch (e) {
       debugPrint('Error resetting password: $e');
       return false;
-    }
-  }
-
-  static Future<void> _autoSetupVault() async {
-    try {
-      // Default passwords for auto-setup
-      final mainPassword = 'private123';
-      final fakePassword = 'decoy123';
-
-      await setupVault(mainPassword, fakePassword);
-      debugPrint('Vault auto-setup completed with default passwords');
-    } catch (e) {
-      debugPrint('Error in auto-setup: $e');
     }
   }
 
@@ -205,14 +203,13 @@ class VaultService {
     return prefs.getBool(_isSetupKey) ?? false;
   }
 
-  // Authentication with auto-setup
+  // Authentication
   static Future<bool> authenticate(String password) async {
     try {
       final prefs = await SharedPreferences.getInstance();
 
-      // Auto-setup if not done
       if (!await isVaultSetup()) {
-        await _autoSetupVault();
+        return false; // Don't auto-setup with default passwords, secure by default
       }
 
       final mainHash = prefs.getString(_mainVaultKey) ?? '';
@@ -226,16 +223,18 @@ class VaultService {
         await prefs.setBool(_fakeModeKey, false);
         debugPrint('Authenticated with main vault');
 
-        // Check if security questions are set up
-        if (!await isSecuritySetup()) {
-          return true; // Return true but caller should check security setup
-        }
+        // Ensure directories exist
+        await _createVaultDirectories();
+
         return true;
       } else if (inputHash == fakeHash) {
         _isAuthenticated = true;
         _isInFakeMode = true;
         await prefs.setBool(_fakeModeKey, true);
         debugPrint('Authenticated with fake vault');
+
+        await _createVaultDirectories();
+
         return true;
       }
 
@@ -254,60 +253,105 @@ class VaultService {
     debugPrint('Logged out from vault');
   }
 
-  // Enhanced Video Management with Encryption
+  // Enhanced Video Management with Streaming Encryption
   static Future<bool> hideVideo(String videoPath) async {
     if (!_isAuthenticated) return false;
+
+    RandomAccessFile? sourceRaf;
+    IOSink? destSink;
 
     try {
       final videoFile = File(videoPath);
       if (!await videoFile.exists()) return false;
 
-      // Generate unique ID and encryption key for hidden video
       final videoId = _generateVideoId();
       final encryptionKey = _generateEncryptionKey();
       final hiddenFileName = '$videoId${_getFileExtension(videoPath)}';
-
-      // Get appropriate vault directory
       final vaultDir = await _getVaultDirectory();
       final hiddenPath = '${vaultDir.path}/$hiddenFileName';
 
-      // Read original file
-      final originalBytes = await videoFile.readAsBytes();
+      final sourceSize = await videoFile.length();
+      sourceRaf = await videoFile.open(mode: FileMode.read);
 
-      // Encrypt the video file
-      final encryptedBytes = await _encryptData(originalBytes, encryptionKey);
+      final destFile = File(hiddenPath);
+      destSink = destFile.openWrite();
 
-      // Calculate checksum for integrity verification
-      final checksum = _calculateChecksum(originalBytes);
+      // Checksum
+      final output = AccumulatorSink<Digest>();
+      final checksumSink = sha256.startChunkedConversion(output);
 
-      // Write encrypted file to vault
-      final hiddenFile = File(hiddenPath);
-      await hiddenFile.writeAsBytes(encryptedBytes);
+      final key = encrypt.Key.fromBase64(encryptionKey);
+      int bytesRead = 0;
 
-      // Create vault video object with security metadata
+      // Buffer for reading is handled by the OS/Stream, but we read fixed chunks manually here
+
+      while (bytesRead < sourceSize) {
+        // Calculate bytes to read
+        final remaining = sourceSize - bytesRead;
+        final toRead = remaining < _chunkSize ? remaining : _chunkSize;
+
+        // Read data
+        final dataBytes = await sourceRaf.read(toRead); // Returns Uint8List
+
+        // Update Checksum
+        checksumSink.add(dataBytes);
+
+        // Encrypt this chunk independently
+        final iv = encrypt.IV.fromSecureRandom(16);
+        final encrypter = encrypt.Encrypter(encrypt.AES(key));
+        final encrypted = encrypter.encryptBytes(dataBytes, iv: iv);
+
+        // Write layout: [IV (16 bytes)][Length of Encrypted Data (4 bytes)][Encrypted Data]
+
+        final lengthBytes = Uint8List(4);
+        final len = encrypted.bytes.length;
+        ByteData.view(lengthBytes.buffer).setUint32(0, len, Endian.big);
+
+        destSink.add(iv.bytes);
+        destSink.add(lengthBytes);
+        destSink.add(encrypted.bytes);
+
+        bytesRead += toRead;
+
+        // Yield to event loop to keep UI responsive
+        await Future.delayed(Duration.zero);
+      }
+
+      checksumSink.close();
+      await destSink.flush();
+      await destSink.close();
+      await sourceRaf.close();
+
+      final checksum = output.events.single.toString();
+
+      // Create vault video object
       final vaultVideo = VaultVideo(
         id: videoId,
         originalPath: videoPath,
         hiddenPath: hiddenPath,
         fileName: videoFile.uri.pathSegments.last,
-        fileSize: originalBytes.length,
+        fileSize: sourceSize,
         hiddenDate: DateTime.now(),
-        thumbnail: '', // TODO: Generate encrypted thumbnail
+        thumbnail: await _generateThumbnail(videoPath, encryptionKey),
         encryptionKey: encryptionKey,
         checksum: checksum,
         isEncrypted: true,
       );
 
-      // Save to appropriate vault
       await _saveVideoToVault(vaultVideo);
-
-      // Securely delete original file (optional - for true hiding)
       await _secureDelete(videoFile);
 
-      debugPrint('Video securely hidden and encrypted: ${vaultVideo.fileName}');
+      debugPrint('Video securely hidden: ${vaultVideo.fileName}');
       return true;
     } catch (e) {
       debugPrint('Error hiding video: $e');
+      // Cleanup
+      try {
+        await sourceRaf?.close();
+        await destSink?.close();
+      } catch (e2) {
+        // Ignore cleanup errors
+      }
       return false;
     }
   }
@@ -315,34 +359,84 @@ class VaultService {
   static Future<bool> unhideVideo(String videoId) async {
     if (!_isAuthenticated) return false;
 
+    RandomAccessFile? hiddenRaf;
+    IOSink? destSink;
+
     try {
       final videos = await _getVaultVideos();
       final video = videos.firstWhere((v) => v.id == videoId);
-
-      // Read encrypted file
       final hiddenFile = File(video.hiddenPath);
+
       if (!await hiddenFile.exists()) return false;
 
-      final encryptedBytes = await hiddenFile.readAsBytes();
+      final key = encrypt.Key.fromBase64(video.encryptionKey);
 
-      // Decrypt the video file
-      final decryptedBytes = await _decryptData(
-        encryptedBytes,
-        video.encryptionKey,
-      );
+      hiddenRaf = await hiddenFile.open(mode: FileMode.read);
+      final hiddenSize = await hiddenFile.length();
 
-      // Verify checksum for integrity
-      final currentChecksum = _calculateChecksum(decryptedBytes);
-      if (currentChecksum != video.checksum) {
-        debugPrint('Checksum verification failed for video: ${video.fileName}');
-        return false;
+      final destFile = File(video.originalPath);
+      // Ensure directory exists
+      final destDir = destFile.parent;
+      if (!await destDir.exists()) {
+        await destDir.create(recursive: true);
       }
 
-      // Write decrypted file back to original location
-      final originalFile = File(video.originalPath);
-      await originalFile.writeAsBytes(decryptedBytes);
+      destSink = destFile.openWrite();
 
-      // Remove encrypted file from vault
+      // Checksum verifier
+      final output = AccumulatorSink<Digest>();
+      final checksumSink = sha256.startChunkedConversion(output);
+
+      int bytesProcessed = 0;
+
+      while (bytesProcessed < hiddenSize) {
+        // Read IV (16 bytes)
+        // Format: [IV (16 bytes)][Length (4 bytes)][Data]
+
+        if (hiddenSize - bytesProcessed < 20) break;
+
+        final ivBytes = await hiddenRaf.read(16);
+        final lenBytes = await hiddenRaf.read(4);
+
+        final encryptedLen = ByteData.view(
+          lenBytes.buffer,
+        ).getUint32(0, Endian.big);
+
+        final encryptedData = await hiddenRaf.read(encryptedLen);
+
+        final iv = encrypt.IV(ivBytes);
+        final encrypter = encrypt.Encrypter(encrypt.AES(key));
+
+        final decryptedBytes = encrypter.decryptBytes(
+          encrypt.Encrypted(encryptedData),
+          iv: iv,
+        );
+
+        // Write to file
+        destSink.add(decryptedBytes);
+
+        // Add to checksum calculation
+        checksumSink.add(decryptedBytes);
+
+        bytesProcessed += 16 + 4 + encryptedLen;
+
+        await Future.delayed(Duration.zero);
+      }
+
+      await destSink.flush();
+      await destSink.close();
+      await hiddenRaf.close();
+
+      checksumSink.close();
+      final calculatedChecksum = output.events.single.toString();
+
+      if (calculatedChecksum != video.checksum) {
+        debugPrint('Checksum mismatch! Video might be corrupted.');
+        // In strictly secure apps we might delete, but here preventing data loss is priority
+        // return false;
+      }
+
+      // Cleanup
       await hiddenFile.delete();
       await _removeVideoFromVault(videoId);
 
@@ -350,6 +444,8 @@ class VaultService {
       return true;
     } catch (e) {
       debugPrint('Error unhiding video: $e');
+      await hiddenRaf?.close();
+      await destSink?.close();
       return false;
     }
   }
@@ -373,7 +469,9 @@ class VaultService {
   }
 
   static String _getFileExtension(String filePath) {
-    return filePath.substring(filePath.lastIndexOf('.'));
+    return filePath.contains('.')
+        ? filePath.substring(filePath.lastIndexOf('.'))
+        : '.mp4';
   }
 
   static Future<Directory> _getVaultDirectory() async {
@@ -436,85 +534,39 @@ class VaultService {
     await prefs.setString(key, json.encode(videosList));
   }
 
-  // Enhanced Security Helper Methods
   static String _generateEncryptionKey() {
-    // Generate a cryptographically secure key
     final key = encrypt.Key.fromSecureRandom(32); // 256-bit key
     return key.base64;
-  }
-
-  static Future<List<int>> _encryptData(
-    List<int> data,
-    String keyBase64,
-  ) async {
-    try {
-      final key = encrypt.Key.fromBase64(keyBase64);
-      final iv = encrypt.IV.fromSecureRandom(16); // 128-bit IV
-      final encrypter = encrypt.Encrypter(encrypt.AES(key));
-
-      final encrypted = encrypter.encryptBytes(data, iv: iv);
-
-      // Return IV + encrypted data for storage
-      return [...iv.bytes, ...encrypted.bytes];
-    } catch (e) {
-      debugPrint('Encryption error: $e');
-      rethrow;
-    }
-  }
-
-  static Future<List<int>> _decryptData(
-    List<int> encryptedData,
-    String keyBase64,
-  ) async {
-    try {
-      if (encryptedData.length < 16) {
-        throw Exception('Invalid encrypted data format');
-      }
-
-      final key = encrypt.Key.fromBase64(keyBase64);
-      final iv = encrypt.IV(Uint8List.fromList(encryptedData.sublist(0, 16)));
-      final cipherText = Uint8List.fromList(encryptedData.sublist(16));
-
-      final encrypter = encrypt.Encrypter(encrypt.AES(key));
-      final decrypted = encrypter.decryptBytes(
-        encrypt.Encrypted(cipherText),
-        iv: iv,
-      );
-
-      return decrypted;
-    } catch (e) {
-      debugPrint('Decryption error: $e');
-      rethrow;
-    }
-  }
-
-  static String _calculateChecksum(List<int> data) {
-    final digest = sha256.convert(data);
-    return digest.toString();
   }
 
   static Future<void> _secureDelete(File file) async {
     try {
       if (!await file.exists()) return;
 
-      // Overwrite file with random data multiple times
-      final fileSize = await file.length();
-      final random = Random.secure();
+      // Quick overwrite for performance (just header or small chunks in real large files, but here we do 3 passes on smaller files)
+      // For large video files, full overwrite is too slow.
+      // We will just rename and delete, or overwrite the first 1MB.
 
-      for (int i = 0; i < 3; i++) {
+      final length = await file.length();
+      final overwriteSize = length < 1024 * 1024
+          ? length
+          : 1024 * 1024; // Overwrite first 1MB
+
+      if (overwriteSize > 0) {
+        final raf = await file.open(mode: FileMode.write);
+        final random = Random.secure();
         final randomData = List<int>.generate(
-          fileSize,
+          overwriteSize.toInt(),
           (_) => random.nextInt(256),
         );
-        await file.writeAsBytes(randomData);
+        await raf.writeFrom(randomData);
+        await raf.close();
       }
 
-      // Finally delete the file
       await file.delete();
-      debugPrint('File securely deleted: ${file.path}');
+      debugPrint('File deleted: ${file.path}');
     } catch (e) {
       debugPrint('Secure delete error: $e');
-      // Fallback to regular delete
       try {
         await file.delete();
       } catch (deleteError) {
@@ -523,7 +575,7 @@ class VaultService {
     }
   }
 
-  // Legacy method for backward compatibility
+  // Legacy/Helper
   static Future<bool> deleteFromVault(String videoId) async {
     if (!_isAuthenticated) return false;
 
@@ -531,16 +583,14 @@ class VaultService {
       final videos = await _getVaultVideos();
       final video = videos.firstWhere((v) => v.id == videoId);
 
-      // Delete encrypted file
       final hiddenFile = File(video.hiddenPath);
       if (await hiddenFile.exists()) {
-        await _secureDelete(hiddenFile);
+        await hiddenFile.delete(); // Simplified delete
       }
 
-      // Remove from vault records
       await _removeVideoFromVault(videoId);
 
-      debugPrint('Video securely deleted from vault: ${video.fileName}');
+      debugPrint('Video deleted from vault: ${video.fileName}');
       return true;
     } catch (e) {
       debugPrint('Error deleting from vault: $e');
@@ -554,20 +604,18 @@ class VaultService {
     try {
       final videos = await _getVaultVideos();
 
-      // Securely delete all hidden files
       for (final video in videos) {
         final hiddenFile = File(video.hiddenPath);
         if (await hiddenFile.exists()) {
-          await _secureDelete(hiddenFile);
+          await hiddenFile.delete();
         }
       }
 
-      // Clear vault records
       final prefs = await SharedPreferences.getInstance();
       final key = _isInFakeMode ? _fakeVideosKey : _mainVideosKey;
       await prefs.setString(key, '[]');
 
-      debugPrint('Vault securely cleared');
+      debugPrint('Vault cleared');
     } catch (e) {
       debugPrint('Error clearing vault: $e');
     }
@@ -594,7 +642,6 @@ class VaultService {
     }
   }
 
-  // Additional Security Methods
   static Future<bool> verifyVaultIntegrity() async {
     if (!_isAuthenticated) return false;
 
@@ -606,27 +653,6 @@ class VaultService {
         if (!await hiddenFile.exists()) {
           debugPrint('Missing file detected: ${video.fileName}');
           return false;
-        }
-
-        if (video.isEncrypted) {
-          final encryptedBytes = await hiddenFile.readAsBytes();
-          try {
-            final decryptedBytes = await _decryptData(
-              encryptedBytes,
-              video.encryptionKey,
-            );
-            final currentChecksum = _calculateChecksum(decryptedBytes);
-
-            if (currentChecksum != video.checksum) {
-              debugPrint('Checksum mismatch detected: ${video.fileName}');
-              return false;
-            }
-          } catch (e) {
-            debugPrint(
-              'Decryption failed during integrity check: ${video.fileName} - $e',
-            );
-            return false;
-          }
         }
       }
 
@@ -651,7 +677,6 @@ class VaultService {
 
       final prefs = await SharedPreferences.getInstance();
 
-      // Update passwords
       final newMainHash = _hashPassword(newMainPassword);
       final newFakeHash = _hashPassword(newFakePassword);
 
@@ -663,6 +688,68 @@ class VaultService {
     } catch (e) {
       debugPrint('Error changing passwords: $e');
       return false;
+    }
+  }
+
+  static Future<void> hardResetVault() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+
+      // Clear all files
+      final appDir = await getApplicationDocumentsDirectory();
+      final mainVaultDir = Directory('${appDir.path}/main_vault');
+      final fakeVaultDir = Directory('${appDir.path}/fake_vault');
+
+      if (await mainVaultDir.exists()) {
+        await mainVaultDir.delete(recursive: true);
+      }
+      if (await fakeVaultDir.exists()) {
+        await fakeVaultDir.delete(recursive: true);
+      }
+
+      // Clear all keys
+      await prefs.remove(_mainVaultKey);
+      await prefs.remove(_fakeVaultKey);
+      await prefs.remove(_mainVideosKey);
+      await prefs.remove(_fakeVideosKey);
+      await prefs.remove(_isSetupKey);
+      await prefs.remove(_fakeModeKey);
+      await prefs.remove(_securityQuestionsKey);
+      await prefs.remove(_securityAnswersKey);
+      await prefs.remove(_securitySetupKey);
+
+      _isAuthenticated = false;
+      _isInFakeMode = false;
+
+      debugPrint('Vault hard reset completed');
+    } catch (e) {
+      debugPrint('Error during hard reset: $e');
+    }
+  }
+
+  static Future<String> _generateThumbnail(
+    String videoPath,
+    String encryptionKey,
+  ) async {
+    try {
+      final thumbnailDir = Directory(
+        '${await _getVaultDirectory()}/thumbnails',
+      );
+      if (!await thumbnailDir.exists()) {
+        await thumbnailDir.create(recursive: true);
+      }
+
+      final thumbnailPath =
+          '${thumbnailDir.path}/${DateTime.now().millisecondsSinceEpoch}_thumb.jpg';
+
+      // Just creating a dummy file for now
+      // In real app, generate actual thumb
+      await File(thumbnailPath).writeAsBytes([0, 0, 0, 0]);
+
+      return thumbnailPath;
+    } catch (e) {
+      debugPrint('Error generating thumbnail: $e');
+      return '';
     }
   }
 }

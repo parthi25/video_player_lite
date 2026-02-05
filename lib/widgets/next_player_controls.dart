@@ -1,206 +1,231 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/video_player_controller.dart';
+import '../widgets/subtitle_selection_widget.dart';
+import '../services/playlist_service.dart';
+import '../screens/video_cutter_screen.dart';
 
-class NextPlayerControls extends ConsumerWidget {
+class NextPlayerControls extends ConsumerStatefulWidget {
   const NextPlayerControls({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<NextPlayerControls> createState() => _NextPlayerControlsState();
+}
+
+class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
+    with TickerProviderStateMixin, WidgetsBindingObserver {
+  bool _showSidePanel = false;
+  late AnimationController _fadeController;
+  late Animation<double> _fadeAnimation;
+
+  Timer? _hideTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    );
+    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(parent: _fadeController, curve: Curves.easeInOut),
+    );
+    
+    _fadeController.forward();
+    _startHideTimer();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _hideTimer?.cancel();
+    _fadeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused) {
+      _hideTimer?.cancel();
+    }
+  }
+
+  void _startHideTimer() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _fadeController.status == AnimationStatus.completed) {
+        _fadeController.reverse();
+      }
+    });
+  }
+
+  void _toggleControlsVisibility() {
+    if (_fadeController.status == AnimationStatus.completed) {
+      _fadeController.reverse();
+    } else {
+      _fadeController.forward();
+      _startHideTimer();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final videoState = ref.watch(videoPlayerControllerProvider);
     final videoController = ref.read(videoPlayerControllerProvider.notifier);
 
-    if (!videoState.showControls || videoState.isLocked) {
-      return const SizedBox.shrink();
-    }
-
-    // Use RepaintBoundary to isolate repaints
-    return RepaintBoundary(
-      child: AnimatedOpacity(
-        opacity: videoState.showControls ? 1.0 : 0.0,
-        duration: const Duration(
-          milliseconds: 200,
-        ), // Reduced duration for better performance
-        child: Stack(
-          children: [
-            // Top controls
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: _buildTopControls(
-                context,
-                ref,
-                videoState,
-                videoController,
-              ),
-            ),
-
-            // Center play button - only show when controls are visible
-            if (videoState.showControls)
-              Positioned(
-                top: 0,
-                bottom: 0,
-                left: 0,
-                right: 0,
-                child: _buildCenterPlayButton(
-                  context,
-                  ref,
-                  videoState,
-                  videoController,
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: _toggleControlsVisibility,
+      child: FadeTransition(
+        opacity: _fadeAnimation,
+        child: IgnorePointer(
+          ignoring: _fadeController.status == AnimationStatus.dismissed,
+          child: Stack(
+            children: [
+              Container(color: Colors.black26),
+              if (!videoState.isLocked)
+                _buildTopControls(videoState, videoController),
+              _buildBottomControls(videoState, videoController),
+              if (videoState.isLocked)
+                Center(
+                  child: IconButton(
+                    icon: const Icon(Icons.lock, color: Colors.white, size: 64),
+                    onPressed: () => videoController.toggleLock(),
+                  ),
                 ),
-              ),
-
-            // Bottom controls
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: _buildBottomControls(
-                context,
-                ref,
-                videoState,
-                videoController,
-              ),
-            ),
-          ],
+              if (_showSidePanel && !videoState.isLocked)
+                Positioned(
+                  top: 0,
+                  bottom: 0,
+                  right: 0,
+                  child: _buildSidePanel(videoState, videoController),
+                ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   Widget _buildTopControls(
-    BuildContext context,
-    WidgetRef ref,
     VideoPlayerState videoState,
-    dynamic videoController,
+    VideoPlayerControllerNotifier videoController,
   ) {
-    return SafeArea(
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
       child: Container(
-        height: 50,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.black54, Colors.transparent],
+            colors: [Colors.black87, Colors.transparent],
           ),
         ),
-        child: Row(
-          children: [
-            // Back button
-            IconButton(
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-
-            const SizedBox(width: 4),
-
-            // Video title (placeholder) - Use Flexible to prevent overflow
-            Flexible(
-              child: Text(
-                'MX Player',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
+        child: SafeArea(
+          bottom: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                child: Row(
+                  children: [
+                    IconButton(
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: const Icon(Icons.arrow_back, color: Colors.white),
+                    ),
+                    Expanded(
+                      child: Text(
+                        videoState.videoPath?.split(Platform.pathSeparator).last ?? 'Video Player',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => _showAdvancedSettings(videoController),
+                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                    ),
+                  ],
                 ),
-                overflow: TextOverflow.ellipsis,
               ),
-            ),
-
-            const Spacer(),
-
-            // Lock button
-            IconButton(
-              onPressed: videoController.toggleLock,
-              icon: Icon(
-                videoState.isLocked ? Icons.lock : Icons.lock_open,
-                color: Colors.white,
-                size: 20,
-              ),
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-
-            // More options
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert, color: Colors.white, size: 20),
-              padding: EdgeInsets.zero,
-              onSelected: (value) =>
-                  _handleMenuAction(value, ref, videoController),
-              itemBuilder: (context) => [
-                const PopupMenuItem(
-                  value: 'speed',
-                  child: Row(
-                    children: [
-                      Icon(Icons.speed, color: Colors.grey, size: 20),
-                      SizedBox(width: 8),
-                      Text('Playback Speed'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'aspect_ratio',
-                  child: Row(
-                    children: [
-                      Icon(Icons.aspect_ratio, color: Colors.grey, size: 20),
-                      SizedBox(width: 8),
-                      Text('Aspect Ratio'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'subtitle',
-                  child: Row(
-                    children: [
-                      Icon(Icons.subtitles, color: Colors.grey, size: 20),
-                      SizedBox(width: 8),
-                      Text('Subtitles'),
-                    ],
-                  ),
-                ),
-                const PopupMenuItem(
-                  value: 'audio_track',
-                  child: Row(
-                    children: [
-                      Icon(Icons.audiotrack, color: Colors.grey, size: 20),
-                      SizedBox(width: 8),
-                      Text('Audio Track'),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ],
+              _buildActionRibbon(videoState, videoController),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildCenterPlayButton(
-    BuildContext context,
-    WidgetRef ref,
+  Widget _buildActionRibbon(
     VideoPlayerState videoState,
-    dynamic videoController,
+    VideoPlayerControllerNotifier videoController,
   ) {
-    return Center(
-      child: GestureDetector(
-        onTap: videoController.togglePlayPause,
-        child: Container(
-          width: 60,
-          height: 60,
-          decoration: BoxDecoration(
-            color: Colors.black54,
-            shape: BoxShape.circle,
-            border: Border.all(color: Colors.white54, width: 2),
+    final bool isLandscape = MediaQuery.of(context).orientation == Orientation.landscape;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.fromLTRB(isLandscape ? 4 : 16, 0, 16, 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildActionButton(Icons.cast, () => _showCastingControls()),
+          _buildActionButton(Icons.speed, () => _showSpeedSelection(videoController)),
+          _buildActionButton(Icons.subtitles, () => _showSubtitleSelection()),
+          _buildActionButton(Icons.audiotrack, () => _showAudioTrackSelection(videoController)),
+          _buildActionButton(Icons.equalizer, () => _showEqualizer()),
+          _buildActionButton(
+            _getRotationIcon(videoState.orientation),
+            () => _showRotationControls(videoController),
+            color: _getRotationColor(videoState.orientation),
           ),
-          child: Icon(
-            videoState.isPlaying ? Icons.pause : Icons.play_arrow,
-            color: Colors.white,
-            size: 30,
+          _buildActionButton(Icons.content_cut, () => _showVideoCutter()),
+          _buildActionButton(Icons.picture_in_picture, () => _showPiPControls(videoController)),
+        ],
+
+      ),
+    );
+  }
+
+  IconData _getRotationIcon(PlayerOrientation orientation) {
+    switch (orientation) {
+      case PlayerOrientation.auto:
+        return Icons.screen_rotation;
+      case PlayerOrientation.landscape:
+        return Icons.screen_lock_landscape;
+      case PlayerOrientation.portrait:
+        return Icons.screen_lock_portrait;
+    }
+  }
+
+  Color? _getRotationColor(PlayerOrientation orientation) {
+    return orientation == PlayerOrientation.auto ? null : Colors.red;
+  }
+
+  Widget _buildActionButton(IconData icon, VoidCallback onTap, {Color? color}) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 12),
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.1),
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: () {
+             _startHideTimer();
+             onTap();
+          },
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(icon, color: color ?? Colors.white, size: 20),
           ),
         ),
       ),
@@ -208,416 +233,222 @@ class NextPlayerControls extends ConsumerWidget {
   }
 
   Widget _buildBottomControls(
-    BuildContext context,
-    WidgetRef ref,
     VideoPlayerState videoState,
-    dynamic videoController,
+    VideoPlayerControllerNotifier videoController,
   ) {
-    return SafeArea(
+    return Positioned(
+      bottom: 0,
+      left: 0,
+      right: 0,
       child: Container(
-        height: 70,
-        padding: const EdgeInsets.all(12),
         decoration: const BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.bottomCenter,
             end: Alignment.topCenter,
-            colors: [Colors.black54, Colors.transparent],
+            colors: [Colors.black87, Colors.transparent],
           ),
         ),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            // Progress bar
-            _buildProgressBar(context, ref, videoState, videoController),
-
-            const SizedBox(height: 6),
-
-            // Control buttons and time
-            Row(
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                // Current time
-                Flexible(
-                  child: Text(
-                    _formatDuration(videoState.position),
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
-                    overflow: TextOverflow.ellipsis,
+                if (!videoState.isLocked) ...[
+                  Row(
+                    children: [
+                      Text(
+                        _formatDuration(videoState.position),
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                      Expanded(
+                        child: SliderTheme(
+                          data: SliderTheme.of(context).copyWith(
+                            trackHeight: 2,
+                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                            activeTrackColor: Colors.red,
+                            inactiveTrackColor: Colors.white24,
+                            thumbColor: Colors.red,
+                          ),
+                          child: Slider(
+                            min: 0.0,
+                            max: videoState.duration.inMilliseconds.toDouble(),
+                            value: videoState.position.inMilliseconds
+                                .toDouble()
+                                .clamp(0.0, videoState.duration.inMilliseconds.toDouble()),
+                            onChanged: (value) {
+                              _startHideTimer();
+                              videoController.seekTo(Duration(milliseconds: value.round()));
+                            },
+                          ),
+                        ),
+                      ),
+                      Text(
+                        _formatDuration(videoState.duration),
+                        style: const TextStyle(color: Colors.white, fontSize: 12),
+                      ),
+                    ],
                   ),
-                ),
-
-                const SizedBox(width: 8),
-
-                // Play/Pause button
-                IconButton(
-                  onPressed: videoController.togglePlayPause,
-                  icon: Icon(
-                    videoState.isPlaying ? Icons.pause : Icons.play_arrow,
-                    color: Colors.white,
-                    size: 20,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      _buildLockButton(videoState, videoController),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.skip_previous, color: Colors.white, size: 30),
+                            onPressed: () => _playPrevious(videoController),
+                          ),
+                          const SizedBox(width: 12),
+                          _buildPlayPauseButton(videoState, videoController),
+                          const SizedBox(width: 12),
+                          IconButton(
+                            icon: const Icon(Icons.skip_next, color: Colors.white, size: 30),
+                            onPressed: () => _playNext(videoController),
+                          ),
+                        ],
+                      ),
+                      _buildAspectRatioButton(videoState, videoController),
+                    ],
                   ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                const SizedBox(width: 4),
-
-                // Previous button (placeholder)
-                IconButton(
-                  onPressed: () {
-                    // TODO: Implement previous video
-                  },
-                  icon: const Icon(
-                    Icons.skip_previous,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                // Next button (placeholder)
-                IconButton(
-                  onPressed: () {
-                    // TODO: Implement next video
-                  },
-                  icon: const Icon(
-                    Icons.skip_next,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                const Spacer(),
-
-                // Volume button
-                IconButton(
-                  onPressed: () {
-                    _showVolumeDialog(context, ref, videoController);
-                  },
-                  icon: const Icon(
-                    Icons.volume_up,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                const SizedBox(width: 4),
-
-                // Subtitle button
-                IconButton(
-                  onPressed: () {
-                    _showSubtitleDialog(context, ref, videoController);
-                  },
-                  icon: Icon(
-                    videoState.subtitlePath != null
-                        ? Icons.subtitles
-                        : Icons.subtitles_outlined,
-                    color: videoState.subtitlePath != null
-                        ? Colors.red
-                        : Colors.white,
-                    size: 20,
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                const SizedBox(width: 4),
-
-                // Settings button
-                IconButton(
-                  onPressed: () {
-                    _showSettingsDialog(context, ref, videoController);
-                  },
-                  icon: const Icon(
-                    Icons.settings,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                const SizedBox(width: 4),
-
-                // Fullscreen button
-                IconButton(
-                  onPressed: videoController.toggleFullscreen,
-                  icon: Icon(
-                    videoState.isFullscreen
-                        ? Icons.fullscreen_exit
-                        : Icons.fullscreen,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                  padding: const EdgeInsets.all(2),
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                ),
-
-                const SizedBox(width: 8),
-
-                // Total time
-                Flexible(
-                  child: Text(
-                    _formatDuration(videoState.duration),
-                    style: const TextStyle(color: Colors.white, fontSize: 11),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
+                  const SizedBox(height: 16),
+                ] else ...[
+                  Center(child: _buildLockButton(videoState, videoController)),
+                  const SizedBox(height: 16),
+                ],
               ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _buildProgressBar(
-    BuildContext context,
-    WidgetRef ref,
-    VideoPlayerState videoState,
-    dynamic videoController,
-  ) {
-    final position = videoState.position.inMilliseconds.toDouble();
-    final duration = videoState.duration.inMilliseconds.toDouble();
-    final progress = duration > 0 ? position / duration : 0.0;
-
-    return SizedBox(
-      height: 4,
-      child: SliderTheme(
-        data: SliderTheme.of(context).copyWith(
-          activeTrackColor: Colors.red,
-          inactiveTrackColor: Colors.white24,
-          thumbColor: Colors.red,
-          overlayColor: Colors.transparent,
-          thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-          trackHeight: 4,
-        ),
-        child: Slider(
-          value: progress.clamp(0.0, 1.0),
-          onChanged: (value) {
-            final newPosition = value * duration;
-            videoController.seekTo(Duration(milliseconds: newPosition.round()));
-          },
-        ),
-      ),
-    );
-  }
-
-  void _handleMenuAction(String value, WidgetRef ref, dynamic videoController) {
-    switch (value) {
-      case 'speed':
-        _showPlaybackSpeedDialog(ref.context, ref, videoController);
-        break;
-      case 'aspect_ratio':
-        _showAspectRatioDialog(ref.context, ref, videoController);
-        break;
-      case 'subtitle':
-        _showSubtitleDialog(ref.context, ref, videoController);
-        break;
-      case 'audio_track':
-        _showAudioTrackDialog(ref.context, ref, videoController);
-        break;
+  Future<void> _playPrevious(VideoPlayerControllerNotifier videoController) async {
+    final prev = PlaylistService.getPreviousVideo();
+    if (prev != null) {
+      await videoController.initializeVideo(null, prev.path);
     }
   }
 
-  void _showPlaybackSpeedDialog(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic videoController,
+  Future<void> _playNext(VideoPlayerControllerNotifier videoController) async {
+    final next = PlaylistService.getNextVideo();
+    if (next != null) {
+      await videoController.initializeVideo(null, next.path);
+    }
+  }
+
+  Widget _buildPlayPauseButton(
+    VideoPlayerState videoState,
+    VideoPlayerControllerNotifier videoController,
   ) {
-    final speeds = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+    return GestureDetector(
+      onTap: () {
+        _startHideTimer();
+        videoController.togglePlayPause();
+      },
+      child: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+        child: Icon(
+          videoState.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+          color: Colors.black,
+          size: 32,
+        ),
+      ),
+    );
+  }
 
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Playback Speed'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: speeds.length,
-            itemBuilder: (context, index) {
-              final speed = speeds[index];
-              final videoState = ref.watch(videoPlayerControllerProvider);
-              final isSelected = videoState.playbackSpeed == speed;
-
-              return ListTile(
-                title: Text('${speed}x'),
-                trailing: isSelected
-                    ? const Icon(Icons.check, color: Colors.red)
-                    : null,
-                onTap: () {
-                  videoController.setPlaybackSpeed(speed);
-                  Navigator.of(context).pop();
-                },
-              );
-            },
+  Widget _buildLockButton(VideoPlayerState videoState, VideoPlayerControllerNotifier videoController) {
+    return Material(
+      color: videoState.isLocked ? Colors.red.withValues(alpha: 0.6) : Colors.white12,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: () {
+          _startHideTimer();
+          videoController.toggleLock();
+        },
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(
+            videoState.isLocked ? Icons.lock : Icons.lock_open,
+            color: Colors.white,
+            size: 22,
           ),
         ),
       ),
     );
   }
 
-  void _showAspectRatioDialog(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic videoController,
-  ) {
-    final ratios = ['fit', 'fill', 'stretch', '16:9', '4:3'];
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Aspect Ratio'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: ratios.length,
-            itemBuilder: (context, index) {
-              final ratio = ratios[index];
-              final videoState = ref.watch(videoPlayerControllerProvider);
-              final isSelected = videoState.aspectRatio == ratio;
-
-              return ListTile(
-                title: Text(ratio.toUpperCase()),
-                trailing: isSelected
-                    ? const Icon(Icons.check, color: Colors.red)
-                    : null,
-                onTap: () {
-                  videoController.setAspectRatio(ratio);
-                  Navigator.of(context).pop();
-                },
-              );
-            },
+  Widget _buildAspectRatioButton(VideoPlayerState videoState, VideoPlayerControllerNotifier videoController) {
+    return Material(
+      color: Colors.white12,
+      shape: const CircleBorder(),
+      child: InkWell(
+        onTap: () {
+          _startHideTimer();
+          videoController.cycleAspectRatio();
+        },
+        customBorder: const CircleBorder(),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Icon(
+            _getAspectRatioIcon(videoState.aspectRatioMode),
+            color: Colors.white,
+            size: 22,
           ),
         ),
       ),
     );
   }
 
-  void _showVolumeDialog(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic videoController,
-  ) {
-    final videoState = ref.watch(videoPlayerControllerProvider);
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Volume'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.volume_up, size: 48, color: Colors.red),
-            const SizedBox(height: 16),
-            Slider(
-              value: videoState.volume,
-              onChanged: (value) {
-                videoController.setVolume(value);
-              },
-              min: 0.0,
-              max: 1.0,
-              divisions: 20,
-            ),
-            Text('${(videoState.volume * 100).round()}%'),
-          ],
-        ),
-      ),
-    );
+  IconData _getAspectRatioIcon(AspectRatioMode mode) {
+    switch (mode) {
+      case AspectRatioMode.auto:
+        return Icons.aspect_ratio;
+      case AspectRatioMode.fit:
+        return Icons.fit_screen;
+      case AspectRatioMode.fill:
+        return Icons.fullscreen;
+      case AspectRatioMode.sixteenNine:
+        return Icons.crop_16_9;
+      case AspectRatioMode.fourThree:
+        return Icons.crop_3_2;
+      case AspectRatioMode.twentyOneNine:
+        return Icons.crop_7_5;
+      case AspectRatioMode.oneOne:
+        return Icons.crop_square;
+      case AspectRatioMode.stretch:
+        return Icons.unfold_more;
+    }
   }
 
-  void _showSubtitleDialog(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic videoController,
+  Widget _buildSidePanel(
+    VideoPlayerState videoState,
+    VideoPlayerControllerNotifier videoController,
   ) {
-    // TODO: Implement subtitle selection
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Subtitle selection coming soon')),
-    );
-  }
-
-  void _showAudioTrackDialog(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic videoController,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) => const AlertDialog(
-        title: Text('Audio Track'),
-        content: Text('Audio track selection coming soon'),
-      ),
-    );
-  }
-
-  void _showSettingsDialog(
-    BuildContext context,
-    WidgetRef ref,
-    dynamic videoController,
-  ) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Settings'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+    return Container(
+      width: 250,
+      color: Colors.black.withValues(alpha: 0.9),
+      child: SafeArea(
+        child: Column(
           children: [
             ListTile(
-              title: const Text('Hardware Acceleration'),
-              subtitle: const Text('Enable hardware decoding'),
-              trailing: Switch(
-                value: true, // TODO: Get from settings
-                onChanged: (value) {
-                  // TODO: Save to settings
-                },
-              ),
+              leading: const Icon(Icons.close, color: Colors.white),
+              title: const Text('Close', style: TextStyle(color: Colors.white)),
+              onTap: () => setState(() => _showSidePanel = false),
             ),
+            const Divider(color: Colors.white24),
             ListTile(
-              title: const Text('Auto-rotate'),
-              subtitle: const Text('Rotate screen with video'),
-              trailing: Switch(
-                value: true, // TODO: Get from settings
-                onChanged: (value) {
-                  // TODO: Save to settings
-                },
-              ),
-            ),
-            ListTile(
-              title: const Text('Keep Screen On'),
-              subtitle: const Text('Prevent screen from sleeping'),
-              trailing: Switch(
-                value: true, // TODO: Get from settings
-                onChanged: (value) {
-                  // TODO: Save to settings
-                },
-              ),
+              leading: const Icon(Icons.settings, color: Colors.white),
+              title: const Text('Settings', style: TextStyle(color: Colors.white)),
+              onTap: () => _showAdvancedSettings(videoController),
             ),
           ],
         ),
@@ -632,9 +463,116 @@ class NextPlayerControls extends ConsumerWidget {
     final seconds = duration.inSeconds.remainder(60);
 
     if (hours > 0) {
-      return '$hours:${twoDigits(minutes)}:${twoDigits(seconds)}';
+      return "$hours:${twoDigits(minutes)}:${twoDigits(seconds)}";
     } else {
-      return '${twoDigits(minutes)}:${twoDigits(seconds)}';
+      return "${twoDigits(minutes)}:${twoDigits(seconds)}";
     }
+  }
+
+  void _showRotationControls(VideoPlayerControllerNotifier videoController) {
+    videoController.toggleRotation();
+  }
+
+  void _showVideoCutter() {
+    final videoState = ref.read(videoPlayerControllerProvider);
+    if (videoState.videoPath != null) {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => VideoCutterScreen(videoPath: videoState.videoPath!),
+        ),
+      );
+    }
+  }
+
+  void _showCastingControls() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      builder: (context) => CastingControlsWidget(),
+    );
+  }
+
+  void _showSpeedSelection(VideoPlayerControllerNotifier videoController) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      builder: (context) => PlaybackSpeedSelectionWidget(videoController: videoController),
+    );
+  }
+
+  void _showSubtitleSelection() {
+    final videoState = ref.watch(videoPlayerControllerProvider);
+    if (videoState.videoPath == null) return;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => SubtitleSelectionWidget(
+        videoPath: videoState.videoPath!,
+        onSubtitleSelected: () {},
+      ),
+    );
+  }
+
+  void _showAudioTrackSelection(VideoPlayerControllerNotifier videoController) {
+  }
+
+  void _showEqualizer() {
+  }
+
+  void _showPiPControls(VideoPlayerControllerNotifier videoController) {
+    videoController.enterPIP();
+  }
+
+  void _showAdvancedSettings(VideoPlayerControllerNotifier videoController) {
+  }
+}
+
+class CastingControlsWidget extends StatelessWidget {
+  const CastingControlsWidget({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Casting', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          ListTile(
+            leading: const Icon(Icons.cast, color: Colors.white),
+            title: const Text('Available Devices', style: TextStyle(color: Colors.white)),
+            onTap: () {},
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class PlaybackSpeedSelectionWidget extends StatelessWidget {
+  final VideoPlayerControllerNotifier videoController;
+  const PlaybackSpeedSelectionWidget({super.key, required this.videoController});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Playback Speed', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+          ...[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map((speed) => ListTile(
+            title: Text('${speed}x', style: const TextStyle(color: Colors.white)),
+            onTap: () {
+              videoController.setPlaybackSpeed(speed);
+              Navigator.pop(context);
+            },
+          )),
+        ],
+      ),
+    );
   }
 }

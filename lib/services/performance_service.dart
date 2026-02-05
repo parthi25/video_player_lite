@@ -2,10 +2,12 @@ import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
+import 'package:flutter/services.dart';
 
 class PerformanceService {
   static bool _isLowEndDevice = false;
   static bool _isInitialized = false;
+  static bool _isOptimizedForVideo = false;
 
   static Future<void> initialize() async {
     if (_isInitialized) return;
@@ -34,7 +36,49 @@ class PerformanceService {
     _isInitialized = true;
   }
 
+  static Future<void> optimizeForVideoPlayback() async {
+    if (_isOptimizedForVideo) return;
+
+    try {
+      // Set preferred orientations for video playback
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+      ]);
+
+      // Hide system UI for immersive experience
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+      _isOptimizedForVideo = true;
+      debugPrint('Performance optimization enabled for video playback');
+    } catch (e) {
+      debugPrint('Error optimizing performance: $e');
+    }
+  }
+
+  static Future<void> resetPerformanceSettings() async {
+    try {
+      // Reset to default orientations
+      await SystemChrome.setPreferredOrientations([
+        DeviceOrientation.portraitUp,
+        DeviceOrientation.portraitDown,
+        DeviceOrientation.landscapeLeft,
+        DeviceOrientation.landscapeRight,
+      ]);
+
+      // Show system UI again
+      await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+
+      _isOptimizedForVideo = false;
+    } catch (e) {
+      debugPrint('Error resetting performance settings: $e');
+    }
+  }
+
   static bool get isLowEndDevice => _isLowEndDevice;
+  static bool get isOptimizedForVideo => _isOptimizedForVideo;
 
   static bool _isOldIOSDevice(String model) {
     final oldModels = [
@@ -84,5 +128,27 @@ class PerformanceService {
       'fit': BoxFit.contain,
       'placeholder': _isLowEndDevice, // Show placeholder on low-end devices
     };
+  }
+
+  // Get animation duration based on device performance
+  static Duration getAnimationDuration() {
+    if (_isLowEndDevice) {
+      return const Duration(
+        milliseconds: 150,
+      ); // Faster animations on low-end devices
+    }
+    return const Duration(milliseconds: 300); // Normal animations
+  }
+
+  // Get slider update frequency
+  static Duration getSliderUpdateInterval() {
+    if (_isLowEndDevice) {
+      return const Duration(
+        milliseconds: 500,
+      ); // Less frequent updates on low-end devices
+    }
+    return const Duration(
+      milliseconds: 200,
+    ); // More frequent updates on better devices
   }
 }

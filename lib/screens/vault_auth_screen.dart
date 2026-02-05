@@ -337,12 +337,67 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
                         ),
                       ),
                     ),
+
+                    const SizedBox(height: 10),
+
+                    // Hard Reset Button
+                    TextButton(
+                      onPressed: () => _showHardResetDialog(),
+                      child: Text(
+                        'Format Vault & Clear All Data',
+                        style: TextStyle(
+                          color: Colors.red.shade400.withValues(alpha: 0.6),
+                          fontSize: 12,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showHardResetDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        title: const Text(
+          'Format Vault?',
+          style: TextStyle(color: Colors.white),
+        ),
+        content: const Text(
+          'This will PERMANENTLY delete all files inside the private folder and reset your password. This action cannot be undone.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final scaffoldMessenger = ScaffoldMessenger.of(context);
+              final navigator = Navigator.of(context);
+
+              navigator.pop();
+              await VaultService.hardResetVault();
+
+              if (mounted) {
+                scaffoldMessenger.showSnackBar(
+                  const SnackBar(content: Text('Vault cleared successfully')),
+                );
+                navigator.pushReplacementNamed('/vault-setup');
+              }
+            },
+            child: const Text('FORMAT', style: TextStyle(color: Colors.red)),
+          ),
+        ],
       ),
     );
   }

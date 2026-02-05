@@ -1,11 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:video_player/video_player.dart';
+import 'package:flutter/services.dart';
+import 'package:media_kit_video/media_kit_video.dart';
 import '../core/video_player_controller.dart';
-import 'next_gesture_detector.dart';
+import '../services/performance_service.dart';
+import '../services/system_controls_service.dart';
+import '../services/video_format_service.dart';
 import 'next_player_controls.dart';
+import 'next_gesture_detector.dart';
+import 'subtitle_display_widget.dart';
+import 'video_error_handler.dart';
 
-class NextVideoPlayer extends ConsumerWidget {
+class NextVideoPlayer extends ConsumerStatefulWidget {
   final String? videoUrl;
   final String? videoPath;
   final bool autoPlay;
@@ -22,95 +28,196 @@ class NextVideoPlayer extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final videoState = ref.watch(videoPlayerControllerProvider);
-    final videoController = ref.read(videoPlayerControllerProvider.notifier);
+  ConsumerState<NextVideoPlayer> createState() => _NextVideoPlayerState();
+}
 
-    // Initialize video when widget is first built
+class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
+  late VideoPlayerControllerNotifier _videoController;
+
+  @override
+  void initState() {
+    super.initState();
+    _videoController = ref.read(videoPlayerControllerProvider.notifier);
+    PerformanceService.initialize();
+    PerformanceService.optimizeForVideoPlayback();
+    _initializeVideo();
+    
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!videoState.isInitialized &&
-          (videoUrl != null || videoPath != null)) {
-        videoController.initializeVideo(videoUrl, videoPath);
+      final videoState = ref.read(videoPlayerControllerProvider);
+      if (videoState.type == MediaType.audio) {
+        _resetOrientation();
+      } else {
+        _applyOrientation(videoState.orientation);
       }
     });
+  }
 
-    // Listen for video end with optimized listener
-    ref.listen<VideoPlayerState>(videoPlayerControllerProvider, (
-      previous,
+  @override
+  void dispose() {
+    _videoController.reset();
+    _resetOrientation();
+    PerformanceService.resetPerformanceSettings();
+    super.dispose();
+  }
+
+  void _initializeVideo() {
+    final videoState = ref.read(videoPlayerControllerProvider);
+
+    if (!videoState.isInitialized &&
+        (widget.videoUrl != null || widget.videoPath != null) &&
+        videoState.player == null) {
+      _videoController.initializeVideo(widget.videoUrl, widget.videoPath);
+    }
+  }
+
+  void _resetOrientation() {
+    SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+      DeviceOrientation.landscapeLeft,
+      DeviceOrientation.landscapeRight,
+    ]);
+  }
+
+  void _applyOrientation(PlayerOrientation orientation) {
+    switch (orientation) {
+      case PlayerOrientation.auto:
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+        break;
+      case PlayerOrientation.landscape:
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.landscapeLeft,
+          DeviceOrientation.landscapeRight,
+        ]);
+        break;
+      case PlayerOrientation.portrait:
+        SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+          DeviceOrientation.portraitDown,
+        ]);
+        break;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    ref.listen(videoPlayerControllerProvider.select((s) => s.orientation), (
+      _,
       next,
     ) {
-      if (previous != null &&
-          next.isInitialized &&
-          next.controller != null &&
-          next.controller!.value.isInitialized) {
-        next.controller!.addListener(() {
-          if (next.controller!.value.position >=
-                  next.controller!.value.duration &&
-              next.controller!.value.duration != Duration.zero) {
-            onVideoEnded?.call();
-          }
-        });
-      }
+      _applyOrientation(next);
     });
 
-    if (videoState.errorMessage != null) {
-      return _buildErrorWidget(context, videoState.errorMessage!);
-    }
+    final videoState = ref.watch(videoPlayerControllerProvider);
+    final bool isLoading = !videoState.isInitialized || !videoState.isLoaded;
 
-    if (!videoState.isInitialized) {
-      return _buildLoadingWidget();
-    }
-
-    // Use RepaintBoundary for better performance
-    return RepaintBoundary(
-      child: NextGestureDetector(
-        onSeek: videoController.seekTo,
-        onVolumeChanged: videoController.setVolume,
-        onBrightnessChanged: (brightness) {
-          // TODO: Implement brightness control
-          debugPrint('Brightness: $brightness');
-        },
-        child: Container(
-          color: Colors.black,
+    return VideoPlayerErrorHandler(
+      videoPath: widget.videoPath,
+      videoUrl: widget.videoUrl,
+      onRetry: () => _initializeVideo(),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: SafeArea(
           child: Stack(
-            fit: StackFit.expand,
             children: [
-              // Video player
-              Center(child: _buildVideoPlayer(videoState)),
+              if (videoState.isInitialized)
+                NextGestureDetector(
+                  onSeek: (position) {
+                    ref.read(videoPlayerControllerProvider.notifier).seekTo(position);
+                  },
+                  onVolumeChanged: (volume) {
+                    ref.read(videoPlayerControllerProvider.notifier).setVolume(volume);
+                  },
+                  onBrightnessChanged: (brightness) async {
+                    try {
+                      await SystemControlsService.setBrightness(brightness);
+                    } catch (e) {
+                      debugPrint('Error setting brightness: $e');
+                    }
+                  },
+                  child: Container(
+                    color: Colors.black,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Center(
+                          child: Consumer(
+                            builder: (context, ref, child) {
+                              final currentRatio = ref.watch(
+                                videoPlayerControllerProvider.select((s) => s.aspectRatio),
+                              );
+                              final videoController = ref.watch(
+                                videoPlayerControllerProvider.select((s) => s.videoController),
+                              );
+                              final mediaType = ref.watch(
+                                videoPlayerControllerProvider.select((s) => s.type),
+                              );
 
-              // Custom controls overlay
-              const NextPlayerControls(),
+                              if (videoController == null) {
+                                return const SizedBox.shrink();
+                              }
 
-              // Lock indicator
-              if (videoState.isLocked)
-                Positioned(
-                  top: 60,
-                  left: 0,
-                  right: 0,
-                  child: Center(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black87,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.lock, color: Colors.white, size: 16),
-                          SizedBox(width: 8),
-                          Text(
-                            'Screen Locked',
-                            style: TextStyle(color: Colors.white, fontSize: 12),
+                              if (mediaType == MediaType.audio) {
+                                return _buildAudioPlayerUI();
+                              }
+
+                              Widget videoWidget = Video(
+                                controller: videoController,
+                                fit: BoxFit.contain,
+                                controls: NoVideoControls,
+                              );
+
+                              if (currentRatio > 0 && mediaType == MediaType.video) {
+                                return AspectRatio(
+                                  aspectRatio: currentRatio,
+                                  child: videoWidget,
+                                );
+                              }
+                              return videoWidget;
+                            },
                           ),
-                        ],
-                      ),
+                        ),
+                        Consumer(
+                          builder: (context, ref, child) {
+                            final isLoaded = ref.watch(
+                              videoPlayerControllerProvider.select((s) => s.isLoaded),
+                            );
+                            if (!isLoaded) return const SizedBox.shrink();
+                            return const NextPlayerControls();
+                          },
+                        ),
+                        Consumer(
+                          builder: (context, ref, child) {
+                            final position = ref.watch(
+                              videoPlayerControllerProvider.select((s) => s.position),
+                            );
+                            final subtitles = ref.watch(
+                              videoPlayerControllerProvider.select((s) => s.subtitles),
+                            );
+                            final subtitlePath = ref.watch(
+                              videoPlayerControllerProvider.select((s) => s.subtitlePath),
+                            );
+
+                            if (subtitles.isEmpty || subtitlePath == null) {
+                              return const SizedBox.shrink();
+                            }
+
+                            return SubtitleDisplayWidget(
+                              currentPosition: position,
+                              subtitles: subtitles,
+                            );
+                          },
+                        ),
+                      ],
                     ),
                   ),
                 ),
+              if (isLoading) _buildLoadingIndicator(),
             ],
           ),
         ),
@@ -118,126 +225,47 @@ class NextVideoPlayer extends ConsumerWidget {
     );
   }
 
-  Widget _buildVideoPlayer(VideoPlayerState videoState) {
-    if (videoState.controller == null ||
-        !videoState.controller!.value.isInitialized) {
-      return const SizedBox.shrink();
-    }
-
-    Widget videoWidget = VideoPlayer(videoState.controller!);
-
-    // Apply aspect ratio based on setting
-    switch (videoState.aspectRatio) {
-      case 'fill':
-        videoWidget = FittedBox(fit: BoxFit.cover, child: videoWidget);
-        break;
-      case 'stretch':
-        videoWidget = StretchVideo(child: videoWidget);
-        break;
-      case '16:9':
-        videoWidget = AspectRatio(
-          aspectRatio: 16 / 9,
-          child: FittedBox(fit: BoxFit.contain, child: videoWidget),
-        );
-        break;
-      case '4:3':
-        videoWidget = AspectRatio(
-          aspectRatio: 4 / 3,
-          child: FittedBox(fit: BoxFit.contain, child: videoWidget),
-        );
-        break;
-      case 'fit':
-      default:
-        videoWidget = AspectRatio(
-          aspectRatio: videoState.controller!.value.aspectRatio,
-          child: videoWidget,
-        );
-        break;
-    }
-
-    return videoWidget;
-  }
-
-  Widget _buildLoadingWidget() {
+  Widget _buildLoadingIndicator() {
     return Container(
       color: Colors.black,
       child: const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(color: Colors.red),
-            SizedBox(height: 16),
-            Text(
-              'Loading Video...',
-              style: TextStyle(color: Colors.white, fontSize: 16),
-            ),
-          ],
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
         ),
       ),
     );
   }
 
-  Widget _buildErrorWidget(BuildContext context, String error) {
+  Widget _buildAudioPlayerUI() {
     return Container(
       color: Colors.black,
+      width: double.infinity,
+      height: double.infinity,
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(Icons.error_outline, color: Colors.red, size: 64),
-            const SizedBox(height: 16),
+            Container(
+              width: 200,
+              height: 200,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [Colors.red.shade900, Colors.red.shade400],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+              ),
+              child: const Icon(Icons.music_note_rounded, size: 100, color: Colors.white),
+            ),
+            const SizedBox(height: 40),
             const Text(
-              'Failed to load video',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 32),
-              child: Text(
-                error,
-                style: const TextStyle(color: Colors.grey, fontSize: 14),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () {
-                // TODO: Add retry functionality
-                debugPrint('Retry button pressed');
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.red,
-                foregroundColor: Colors.white,
-              ),
-              child: const Text('Retry'),
+              'Playing Audio',
+              style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-// Custom widget for stretched video
-class StretchVideo extends StatelessWidget {
-  final Widget child;
-
-  const StretchVideo({super.key, required this.child});
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return Transform.scale(
-          scaleX: constraints.maxWidth / constraints.maxHeight,
-          scaleY: constraints.maxHeight / constraints.maxWidth,
-          child: child,
-        );
-      },
     );
   }
 }

@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:file_picker/file_picker.dart';
+import 'package:flutter/services.dart';
 import 'dart:io';
+
 import '../widgets/next_video_player.dart';
-import '../widgets/auto_video_scanner.dart';
-import '../widgets/video_file_item.dart';
-import '../services/performance_service.dart';
+import '../widgets/audio_player_widget.dart';
+import '../services/memory_monitor_service.dart';
+import '../services/video_scanner_service.dart';
 import '../services/playlist_service.dart';
+import '../services/video_format_service.dart';
 import '../services/file_browser_service.dart';
-import '../services/vault_service.dart';
+import '../services/theme_service.dart';
 import 'settings_screen.dart';
-import 'about_screen.dart';
 
 class NextPlayerMainScreen extends ConsumerStatefulWidget {
   const NextPlayerMainScreen({super.key});
@@ -26,141 +27,89 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
   String? _videoPath;
   final TextEditingController _urlController = TextEditingController();
   late TabController _tabController;
-  bool _isScanning = false;
   List<VideoFile> _localVideos = [];
+  List<VideoFile> _filteredVideos = [];
+  String? _currentFilter;
+  String? _currentFolderName;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _initializeServices();
+    MemoryMonitorService.startMonitoring();
+    _initializeVideoScanner();
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _urlController.dispose();
+    MemoryMonitorService.stopMonitoring();
     super.dispose();
   }
 
-  Future<void> _initializeServices() async {
-    await PerformanceService.initialize();
-    await PlaylistService.initialize();
-    _scanAllVideos(); // Auto-scan for videos on startup
-    setState(() {});
-  }
-
-  Future<void> _scanAllVideos() async {
-    setState(() {
-      _isScanning = true;
-      _localVideos.clear(); // Clear previous results
-    });
-
+  Future<void> _initializeVideoScanner() async {
     try {
-      debugPrint('Starting video scan...');
-      final videos = await VideoScanner.scanAllVideos();
-      debugPrint('Scan completed. Found ${videos.length} videos.');
-
-      setState(() {
-        _localVideos = videos;
-        _isScanning = false;
-      });
-
-      // Show success message
-      if (videos.isNotEmpty) {
-        _showSuccessSnackBar('Found ${videos.length} videos');
-      } else {
-        _showErrorSnackBar('No videos found. Check storage permissions.');
+      final cachedVideos = await VideoScannerService.getCachedVideos();
+      if (mounted && cachedVideos.isNotEmpty) {
+        setState(() {
+          _localVideos = cachedVideos;
+          _filteredVideos = cachedVideos;
+        });
       }
-    } catch (e) {
-      debugPrint('Error during video scan: $e');
-      setState(() {
-        _isScanning = false;
+      await PlaylistService.initialize();
+      Future.delayed(const Duration(milliseconds: 1000), () {
+        if (mounted) {
+          _scanVideos(background: true);
+        }
       });
-      _showErrorSnackBar('Failed to scan videos: ${e.toString()}');
+    } catch (e) {
+      debugPrint('Error initializing video scanner: $e');
     }
   }
 
-  void _playVideo(String videoPath) {
-    setState(() {
-      _videoPath = videoPath;
-      _videoUrl = null;
-    });
-    _tabController.animateTo(0); // Switch to player tab
+  Future<void> _scanVideos({bool background = false}) async {
+    try {
+      final videos = await VideoScannerService.scanAllVideos(useCache: false);
+      if (mounted) {
+        setState(() {
+          _localVideos = videos;
+          _applyFilter();
+        });
+
+        if (!background) {
+          if (videos.isNotEmpty) {
+            _showSuccessSnackBar('Found ${videos.length} files');
+          } else {
+            _showErrorSnackBar('No files found.');
+          }
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        if (!background) {
+          _showErrorSnackBar('Failed to scan files: ${e.toString()}');
+        }
+      }
+    }
   }
 
-  Future<void> _useFilePicker() async {
-    try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: [
-          'mp4',
-          'avi',
-          'mov',
-          'mkv',
-          'wmv',
-          'flv',
-          'webm',
-          'm4v',
-          '3gp',
-          'mpg',
-          'mpeg',
-          'ts',
-          'mts',
-          'vob',
-          'f4v',
-          'asf',
-        ],
-        allowMultiple: false,
+  void _playVideo(String videoPath, {bool isAudio = false}) {
+    if (isAudio) {
+      final fileName = videoPath.split(Platform.pathSeparator).last;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) =>
+              AudioPlayerWidget(audioPath: videoPath, audioTitle: fileName),
+        ),
       );
-
-      if (result != null && result.files.single.path != null) {
-        final videoPath = result.files.single.path!;
-        _playVideo(videoPath);
-        _showSuccessSnackBar('Video loaded successfully');
-      }
-    } catch (e) {
-      _showErrorSnackBar('Failed to pick video file: $e');
-    }
-  }
-
-  Future<void> _useFileBrowser() async {
-    try {
-      final result = await showModalBottomSheet<String>(
-        context: context,
-        isScrollControlled: true,
-        backgroundColor: Colors.transparent,
-        builder: (context) => const AutoVideoScannerWidget(),
-      );
-
-      if (result != null) {
-        _playVideo(result);
-      }
-    } catch (e) {
-      _showErrorSnackBar('Failed to browse files: $e');
-    }
-  }
-
-  void _loadNetworkVideo() {
-    if (_urlController.text.trim().isNotEmpty) {
-      setState(() {
-        _videoUrl = _urlController.text.trim();
-        _videoPath = null;
-      });
-      _urlController.clear();
     } else {
-      _showErrorSnackBar('Please enter a valid video URL');
+      setState(() {
+        _videoPath = videoPath;
+        _videoUrl = null;
+      });
     }
-  }
-
-  void _showErrorSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red,
-        duration: const Duration(seconds: 3),
-      ),
-    );
   }
 
   void _onVideoEnded() {
@@ -171,22 +120,152 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     _showSuccessSnackBar('Video completed');
   }
 
+  void _applyFilter() {
+    setState(() {
+      if (_currentFilter == null && _currentFolderName == null) {
+        _filteredVideos = _localVideos;
+      } else if (_currentFilter != null) {
+        if (_currentFilter == 'music') {
+          _filteredVideos = _localVideos.where((v) => v.isAudio).toList();
+          debugPrint(
+            'Music filter: Found ${_filteredVideos.length} audio files out of ${_localVideos.length} total',
+          );
+        } else if (_currentFilter == 'videos') {
+          _filteredVideos = _localVideos
+              .where((v) => v.type == MediaType.video)
+              .toList();
+        } else {
+          _filteredVideos = _localVideos;
+        }
+      } else {
+        _filteredVideos = _localVideos;
+      }
+    });
+  }
+
+  void _onChipTap(String label) {
+    HapticFeedback.lightImpact();
+    setState(() {
+      if (label == 'Privacy') {
+        Navigator.of(context).pushNamed('/vault-auth');
+      } else {
+        _currentFilter = label.toLowerCase() == 'all'
+            ? null
+            : label.toLowerCase();
+        _currentFolderName = null;
+        _applyFilter();
+      }
+    });
+  }
+
+  void _showUrlDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Play from URL'),
+        content: TextField(
+          controller: _urlController,
+          decoration: const InputDecoration(
+            hintText: 'Enter video URL',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (_urlController.text.isNotEmpty) {
+                setState(() {
+                  _videoUrl = _urlController.text;
+                  _videoPath = null;
+                });
+                Navigator.pop(context);
+              }
+            },
+            child: const Text('Play'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSortOptions() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'Sort By',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.sort_by_alpha),
+            title: const Text('Name'),
+            onTap: () {
+              _sortVideos((a, b) => a.name.compareTo(b.name));
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.date_range),
+            title: const Text('Date'),
+            onTap: () {
+              _sortVideos((a, b) => b.lastModified.compareTo(a.lastModified));
+              Navigator.pop(context);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.straighten),
+            title: const Text('Size'),
+            onTap: () {
+              _sortVideos((a, b) => b.size.compareTo(a.size));
+              Navigator.pop(context);
+            },
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
+  void _sortVideos(int Function(VideoFile, VideoFile) compare) {
+    setState(() {
+      _localVideos.sort(compare);
+      _applyFilter();
+    });
+  }
+
   void _showSuccessSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.green,
-        duration: const Duration(seconds: 2),
-      ),
+      SnackBar(content: Text(message), backgroundColor: Colors.green),
+    );
+  }
+
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_videoUrl != null || _videoPath != null) {
-      // Show video player
+    final theme = ref.watch(themeModeProvider);
+    final isDark = theme == ThemeMode.dark;
+
+    if (_videoPath != null || _videoUrl != null) {
       return Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: isDark ? Colors.black : Colors.white,
         body: NextVideoPlayer(
           videoUrl: _videoUrl,
           videoPath: _videoPath,
@@ -197,505 +276,443 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       );
     }
 
-    // Show MX Player main interface
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: theme == ThemeMode.dark ? Colors.black : Colors.white,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: theme == ThemeMode.dark ? Colors.black : Colors.white,
         elevation: 0,
-        toolbarHeight: 50,
-        title: const Text(
-          'NEXT-GEN VIDEO PLAYER',
+        centerTitle: false,
+        title: Text(
+          'NEXT PLAYER',
           style: TextStyle(
-            color: Colors.white,
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
+            color: theme == ThemeMode.dark ? Colors.white : Colors.black,
+            fontSize: 24,
+            fontWeight: FontWeight.bold,
           ),
         ),
         actions: [
           IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.search, color: Colors.white, size: 20),
-            padding: const EdgeInsets.all(8),
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-          ),
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white, size: 20),
-            padding: const EdgeInsets.all(8),
-            onSelected: (value) async {
-              switch (value) {
-                case 'vault':
-                  final navigator = Navigator.of(context);
-                  final isSetup = await VaultService.isVaultSetup();
-                  if (mounted) {
-                    if (isSetup) {
-                      navigator.pushNamed('/vault-auth');
-                    } else {
-                      navigator.pushNamed('/vault-setup');
-                    }
-                  }
-                  break;
-                case 'settings':
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsScreen(),
-                    ),
-                  );
-                  break;
-                case 'about':
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const AboutScreen(),
-                    ),
-                  );
-                  break;
-              }
+            icon: Icon(
+              theme == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
+              color: theme == ThemeMode.dark ? Colors.white54 : Colors.black54,
+            ),
+            onPressed: () {
+              ref.read(themeModeProvider.notifier).toggleTheme();
             },
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'vault',
-                child: Row(
-                  children: [
-                    Icon(Icons.lock, color: Colors.grey),
-                    SizedBox(width: 8),
-                    Text('Secure Vault'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'settings',
-                child: Row(
-                  children: [
-                    Icon(Icons.settings, color: Colors.grey),
-                    SizedBox(width: 8),
-                    Text('Settings'),
-                  ],
-                ),
-              ),
-              const PopupMenuItem(
-                value: 'about',
-                child: Row(
-                  children: [
-                    Icon(Icons.info_outline, color: Colors.grey),
-                    SizedBox(width: 8),
-                    Text('About'),
-                  ],
-                ),
-              ),
-            ],
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.cast,
+              color: theme == ThemeMode.dark ? Colors.white54 : Colors.black54,
+            ),
+            onPressed: () {},
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.search,
+              color: theme == ThemeMode.dark ? Colors.white54 : Colors.black54,
+            ),
+            onPressed: _showUrlDialog,
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.sort,
+              color: theme == ThemeMode.dark ? Colors.white54 : Colors.black54,
+            ),
+            onPressed: _showSortOptions,
+          ),
+          IconButton(
+            icon: Icon(
+              Icons.settings_outlined,
+              color: theme == ThemeMode.dark ? Colors.white54 : Colors.black54,
+            ),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SettingsScreen()),
+              );
+            },
           ),
         ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: Colors.red,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.grey,
-          tabs: const [
-            Tab(text: 'Player'),
-            Tab(text: 'Folders'),
-            Tab(text: 'Videos'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(60),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Row(
+              children: [
+                _buildChip(
+                  'Videos',
+                  Icons.movie_outlined,
+                  Colors.red,
+                  () => _onChipTap('Videos'),
+                  isActive: _currentFilter == 'videos',
+                ),
+                _buildChip(
+                  'Music',
+                  Icons.music_note,
+                  Colors.indigo,
+                  () => _onChipTap('Music'),
+                  isActive: _currentFilter == 'music',
+                ),
+                _buildChip(
+                  'Streaming',
+                  Icons.sensors,
+                  Colors.purple,
+                  () => _onChipTap('Streaming'),
+                  isActive: _currentFilter == 'streaming',
+                ),
+                _buildChip(
+                  'Privacy',
+                  Icons.lock_outline,
+                  Colors.blue,
+                  () => _onChipTap('Privacy'),
+                ),
+                _buildChip(
+                  'Share',
+                  Icons.share_outlined,
+                  Colors.purple,
+                  () => _onChipTap('Share'),
+                ),
+                _buildChip(
+                  'Downloads',
+                  Icons.download_outlined,
+                  Colors.indigo,
+                  () => _onChipTap('Downloads'),
+                  isActive: _currentFilter == 'downloads',
+                ),
+              ],
+            ),
+          ),
         ),
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [_buildPlayerTab(), _buildFoldersTab(), _buildVideosTab()],
+      body: RefreshIndicator(
+        onRefresh: () => _scanVideos(background: false),
+        child: _buildFoldersList(),
       ),
     );
   }
 
-  Widget _buildPlayerTab() {
-    return Container(
-      color: Colors.black,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+  Widget _buildChip(
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onTap, {
+    bool isActive = false,
+  }) {
+    return FilterChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [Icon(icon, size: 16), const SizedBox(width: 6), Text(label)],
+      ),
+      selected: isActive,
+      onSelected: (_) => onTap(),
+      backgroundColor: Colors.grey[200],
+      selectedColor: color.withValues(alpha: 0.2),
+      labelStyle: TextStyle(
+        color: isActive ? color : Colors.grey[700],
+        fontWeight: isActive ? FontWeight.w600 : FontWeight.w500,
+        fontSize: 13,
+      ),
+      side: BorderSide.none,
+      elevation: 0,
+      pressElevation: 2,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+    );
+  }
+
+  Widget _buildFoldersList() {
+    final folderMap = <String, List<VideoFile>>{};
+    for (var v in _localVideos) {
+      try {
+        final parentPath = Directory(v.path).parent.path;
+        if (parentPath == '.' || parentPath == '/' || parentPath.isEmpty) {
+          continue;
+        }
+
+        final parentName = parentPath.split(Platform.pathSeparator).last;
+        if (parentName.isEmpty) continue;
+
+        folderMap.putIfAbsent(parentName, () => []).add(v);
+      } catch (e) {
+        // Skip invalid paths
+      }
+    }
+
+    final bool isFiltering =
+        _currentFilter != null || _currentFolderName != null;
+    final List<VideoFile> displayVideos = isFiltering
+        ? _filteredVideos
+        : _localVideos;
+
+    if (displayVideos.isEmpty) {
+      return Center(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // Welcome message
-            Container(
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2A)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Welcome to NEXT-GEN VIDEO PLAYER',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Choose a video source to get started',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 16),
-                  ),
-                ],
-              ),
+            Icon(
+              isFiltering ? Icons.filter_list : Icons.folder_open,
+              size: 64,
+              color: Colors.grey[400],
             ),
-
-            const SizedBox(height: 24),
-
-            // Video source options
-            const Text(
-              'Video Sources',
+            const SizedBox(height: 16),
+            Text(
+              isFiltering ? 'No files found' : 'No videos found',
               style: TextStyle(
-                color: Colors.white,
                 fontSize: 18,
-                fontWeight: FontWeight.bold,
+                color: Colors.grey[600],
+                fontWeight: FontWeight.w500,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
+            if (isFiltering)
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _currentFilter = null;
+                    _currentFolderName = null;
+                    _applyFilter();
+                  });
+                },
+                child: const Text('Clear Filter'),
+              )
+            else
+              TextButton(
+                onPressed: () => _scanVideos(background: false),
+                child: const Text('Scan for Videos'),
+              ),
+          ],
+        ),
+      );
+    }
 
-            Row(
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: displayVideos.length,
+      itemBuilder: (context, index) {
+        final video = displayVideos[index];
+        return _buildVideoListItem(video);
+      },
+    );
+  }
+
+  Widget _buildVideoListItem(VideoFile video) {
+    final theme = ref.watch(themeModeProvider);
+    final isDark = theme == ThemeMode.dark;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F7),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _playVideo(video.path, isAudio: video.isAudio),
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
               children: [
-                Expanded(
-                  child: _buildSourceOption(
-                    icon: Icons.file_upload,
-                    label: 'Local File',
-                    description: 'Browse device storage',
-                    onTap: _useFilePicker,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildSourceOption(
-                    icon: Icons.folder,
-                    label: 'File Browser',
-                    description: 'Browse all videos',
-                    onTap: _useFileBrowser,
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 16),
-
-            Row(
-              children: [
-                Expanded(
-                  child: _buildSourceOption(
-                    icon: Icons.link,
-                    label: 'Network URL',
-                    description: 'Stream from URL',
-                    onTap: _showUrlDialog,
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: _buildSourceOption(
-                    icon: Icons.refresh,
-                    label: 'Scan Storage',
-                    description: 'Find all videos',
-                    onTap: _scanAllVideos,
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 24),
-
-            // Quick stats
-            if (_localVideos.isNotEmpty)
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E1E1E),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFF2A2A2A)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.video_library,
-                      color: Colors.red,
+                Hero(
+                  tag: 'video_thumb_${video.path}',
+                  child: Container(
+                    width: 80,
+                    height: 50,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: video.type == MediaType.audio
+                            ? [Colors.blue.shade700, Colors.blue.shade900]
+                            : video.type == MediaType.streaming
+                            ? [Colors.purple.shade700, Colors.purple.shade900]
+                            : [Colors.red.shade700, Colors.orange.shade800],
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color:
+                              (video.type == MediaType.audio
+                                      ? Colors.blue
+                                      : (video.type == MediaType.streaming
+                                            ? Colors.purple
+                                            : Colors.red))
+                                  .withValues(alpha: 0.3),
+                          blurRadius: 8,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      video.type == MediaType.audio
+                          ? Icons.music_note_rounded
+                          : video.type == MediaType.streaming
+                          ? Icons.sensors_rounded
+                          : Icons.play_arrow_rounded,
+                      color: Colors.white,
                       size: 24,
                     ),
-                    const SizedBox(width: 12),
-                    Text(
-                      '${_localVideos.length} videos found',
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
-                    ),
-                    const Spacer(),
-                    TextButton(
-                      onPressed: () => _tabController.animateTo(2),
-                      child: const Text(
-                        'View All',
-                        style: TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSourceOption({
-    required IconData icon,
-    required String label,
-    required String description,
-    required VoidCallback onTap,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: const Color(0xFF2A2A2A),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF3A3A3A)),
-        ),
-        child: Column(
-          children: [
-            Icon(icon, size: 32, color: Colors.red),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              description,
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFoldersTab() {
-    return Container(
-      color: Colors.black,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Storage Folders',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            _buildFolderCard(
-              Icons.download,
-              'Downloads',
-              'Downloaded files',
-              '/storage/emulated/0/Download',
-            ),
-
-            _buildFolderCard(
-              Icons.movie,
-              'Movies',
-              'Movie files',
-              '/storage/emulated/0/Movies',
-            ),
-
-            _buildFolderCard(
-              Icons.photo_camera,
-              'DCIM',
-              'Camera videos',
-              '/storage/emulated/0/DCIM',
-            ),
-
-            _buildFolderCard(
-              Icons.image,
-              'Pictures',
-              'Picture folders',
-              '/storage/emulated/0/Pictures',
-            ),
-
-            _buildFolderCard(
-              Icons.storage,
-              'WhatsApp',
-              'WhatsApp media',
-              '/storage/emulated/0/WhatsApp/Media',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFolderCard(
-    IconData icon,
-    String title,
-    String description,
-    String path,
-  ) {
-    return Card(
-      color: const Color(0xFF1E1E1E),
-      margin: const EdgeInsets.only(bottom: 12),
-      child: ListTile(
-        leading: Icon(icon, color: Colors.red),
-        title: Text(title, style: const TextStyle(color: Colors.white)),
-        subtitle: Text(description, style: TextStyle(color: Colors.grey[400])),
-        trailing: const Icon(
-          Icons.arrow_forward_ios,
-          color: Colors.grey,
-          size: 16,
-        ),
-        onTap: () => _scanStorage(path, title),
-      ),
-    );
-  }
-
-  Future<void> _scanStorage(String path, String title) async {
-    setState(() {
-      _isScanning = true;
-    });
-
-    try {
-      final directory = Directory(path);
-      if (await directory.exists()) {
-        final videos = await FileBrowserService.getVideoFilesInDirectory(path);
-        setState(() {
-          _localVideos.addAll(videos);
-          _isScanning = false;
-        });
-        _tabController.animateTo(2); // Switch to videos tab
-        _showSuccessSnackBar('Found ${videos.length} videos in $title');
-      }
-    } catch (e) {
-      setState(() {
-        _isScanning = false;
-      });
-      _showErrorSnackBar('Failed to scan $path: $e');
-    }
-  }
-
-  Widget _buildVideosTab() {
-    return Container(
-      color: Colors.black,
-      child: _isScanning
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Colors.red),
-                  SizedBox(height: 16),
-                  Text(
-                    'Scanning for videos...',
-                    style: TextStyle(color: Colors.white, fontSize: 16),
-                  ),
-                ],
-              ),
-            )
-          : _localVideos.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(
-                    Icons.video_library_outlined,
-                    size: 64,
-                    color: Colors.grey,
-                  ),
-                  const SizedBox(height: 16),
-                  const Text(
-                    'No videos found',
-                    style: TextStyle(color: Colors.grey, fontSize: 16),
-                  ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Try scanning storage folders',
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ElevatedButton(
-                        onPressed: _scanAllVideos,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
+                      Text(
+                        video.name,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : Colors.black,
                         ),
-                        child: const Text('Scan Videos'),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      ElevatedButton(
-                        onPressed: _useFilePicker,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.grey[700],
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Pick File'),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color:
+                                  (video.type == MediaType.audio
+                                          ? Colors.blue
+                                          : (video.type == MediaType.streaming
+                                                ? Colors.purple
+                                                : Colors.red))
+                                      .withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              video.type == MediaType.audio
+                                  ? 'Audio'
+                                  : video.type == MediaType.streaming
+                                  ? 'Stream'
+                                  : 'Video',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                color: video.type == MediaType.audio
+                                    ? Colors.blue.shade600
+                                    : video.type == MediaType.streaming
+                                    ? Colors.purple.shade600
+                                    : Colors.red.shade600,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            video.formattedSize,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isDark
+                                  ? Colors.grey[400]
+                                  : Colors.grey[600],
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ],
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(8),
-              itemCount: _localVideos.length,
-              itemBuilder: (context, index) {
-                final video = _localVideos[index];
-                return VideoFileItem(
-                  videoFile: video,
-                  onTap: () => _playVideo(video.path),
-                );
-              },
+                ),
+                PopupMenuButton<String>(
+                  icon: Icon(
+                    Icons.more_vert,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  ),
+                  onSelected: (value) {
+                    switch (value) {
+                      case 'play':
+                        _playVideo(video.path, isAudio: video.isAudio);
+                        break;
+                      case 'info':
+                        _showVideoInfo(video);
+                        break;
+                      case 'share':
+                        _shareVideo(video);
+                        break;
+                    }
+                  },
+                  itemBuilder: (context) => [
+                    const PopupMenuItem(
+                      value: 'play',
+                      child: Row(
+                        children: [
+                          Icon(Icons.play_arrow),
+                          SizedBox(width: 8),
+                          Text('Play'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'info',
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline),
+                          SizedBox(width: 8),
+                          Text('Info'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
+                      value: 'share',
+                      child: Row(
+                        children: [
+                          Icon(Icons.share),
+                          SizedBox(width: 8),
+                          Text('Share'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
+          ),
+        ),
+      ),
     );
   }
 
-  void _showUrlDialog() {
+  void _showVideoInfo(VideoFile video) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
-          'Network Video URL',
-          style: TextStyle(color: Colors.white),
-        ),
-        content: TextField(
-          controller: _urlController,
-          decoration: const InputDecoration(
-            hintText: 'Enter video URL',
-            hintStyle: TextStyle(color: Colors.grey),
-            enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.grey),
-            ),
-            focusedBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: Colors.red),
-            ),
-          ),
-          style: const TextStyle(color: Colors.white),
+        title: Text(video.name),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Path: ${video.path}'),
+            const SizedBox(height: 8),
+            Text('Size: ${video.formattedSize}'),
+            const SizedBox(height: 8),
+            Text('Type: ${video.type.name}'),
+            const SizedBox(height: 8),
+            Text('Format: ${video.format}'),
+            const SizedBox(height: 8),
+            Text('Modified: ${video.lastModified}'),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel', style: TextStyle(color: Colors.grey)),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.of(context).pop();
-              _loadNetworkVideo();
-            },
-            child: const Text('Load', style: TextStyle(color: Colors.red)),
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
+  }
+
+  void _shareVideo(VideoFile video) {
+    // Implement share functionality
+    _showSuccessSnackBar('Share functionality coming soon!');
   }
 }

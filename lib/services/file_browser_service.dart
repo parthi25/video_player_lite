@@ -13,6 +13,7 @@ class VideoFile {
   final String format;
   final bool isSupported;
   final String quality;
+  final MediaType type;
 
   VideoFile({
     required this.path,
@@ -23,9 +24,16 @@ class VideoFile {
     String? format,
     bool? isSupported,
     String? quality,
+    MediaType? type,
   }) : format = format ?? VideoFormatService.getFormatName(path),
        isSupported = isSupported ?? VideoFormatService.isFileSupported(path),
-       quality = quality ?? VideoFormatService.getQualityIndicator(path);
+       quality = quality ?? VideoFormatService.getQualityIndicator(path),
+       type =
+           type ??
+           (VideoFormatService.getFormatByPath(path)?.type ?? MediaType.video);
+
+  bool get isAudio => type == MediaType.audio;
+  bool get isStreaming => type == MediaType.streaming;
 
   String get formattedSize {
     if (size < 1024) return '$size B';
@@ -43,6 +51,36 @@ class VideoFile {
     return nameWithoutExt.length > 30
         ? '${nameWithoutExt.substring(0, 30)}...'
         : nameWithoutExt;
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'path': path,
+      'name': name,
+      'size': size,
+      'lastModified': lastModified.toIso8601String(),
+      'thumbnail': thumbnail,
+      'format': format,
+      'isSupported': isSupported,
+      'quality': quality,
+      'type': type.index,
+    };
+  }
+
+  factory VideoFile.fromJson(Map<String, dynamic> json) {
+    return VideoFile(
+      path: json['path'],
+      name: json['name'],
+      size: json['size'],
+      lastModified: DateTime.parse(json['lastModified']),
+      thumbnail: json['thumbnail'],
+      format: json['format'],
+      isSupported: json['isSupported'],
+      quality: json['quality'],
+      type: json['type'] != null
+          ? MediaType.values[json['type']]
+          : MediaType.video,
+    );
   }
 }
 
@@ -68,6 +106,14 @@ class FileBrowserService {
     'asf',
     'rm',
     'rmvb',
+    'mp3',
+    'wav',
+    'm4a',
+    'ogg',
+    'flac',
+    'aac',
+    'm3u8',
+    'm3u',
   ];
 
   static List<String> getAllSupportedExtensions() {
@@ -247,7 +293,16 @@ class FileBrowserService {
         VideoFormatService.isFormatSupported(extension);
   }
 
-  static String getFileIcon(String extension) {
+  static String getFileIcon(
+    String extension, [
+    MediaType type = MediaType.video,
+  ]) {
+    if (type == MediaType.audio) {
+      return '🎵';
+    }
+    if (type == MediaType.streaming) {
+      return '📡';
+    }
     switch (extension.toLowerCase()) {
       case 'mp4':
         return '🎬';
@@ -263,6 +318,8 @@ class FileBrowserService {
         return '🌐';
       case 'webm':
         return '🌍';
+      case 'm3u8':
+        return '📡';
       default:
         return '📺';
     }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/video_player_controller.dart';
 import '../services/subtitle_service.dart';
+import '../services/settings_service.dart';
 
 class SubtitleWidget extends ConsumerWidget {
   const SubtitleWidget({super.key});
@@ -51,6 +52,7 @@ class SubtitleControlPanel extends ConsumerWidget {
   final SubtitleTrack? currentTrack;
   final Function(SubtitleTrack?) onTrackSelected;
   final bool isVisible;
+  final Function(String)? onLanguageSelected;
 
   const SubtitleControlPanel({
     super.key,
@@ -58,6 +60,7 @@ class SubtitleControlPanel extends ConsumerWidget {
     required this.currentTrack,
     required this.onTrackSelected,
     required this.isVisible,
+    this.onLanguageSelected,
   });
 
   @override
@@ -168,7 +171,27 @@ class SubtitleControlPanel extends ConsumerWidget {
                 subtitle: const Text('Search online for subtitles'),
                 onTap: () {
                   Navigator.of(context).pop();
-                  _showDownloadDialog(context, ref);
+                  _showDownloadDialog(
+                    context,
+                    ref,
+                    onLanguageSelected: (language) {
+                      // Create a new subtitle track from the downloaded file
+                      final videoState = ref.read(
+                        videoPlayerControllerProvider,
+                      );
+                      if (videoState.videoPath != null) {
+                        final subtitlePath =
+                            '${videoState.videoPath!.substring(0, videoState.videoPath!.lastIndexOf('.'))}_$language.srt';
+                        final newTrack = SubtitleTrack(
+                          path: subtitlePath,
+                          language: language,
+                          label: _getLanguageName(language),
+                          flag: _getLanguageFlag(language),
+                        );
+                        onTrackSelected(newTrack);
+                      }
+                    },
+                  );
                 },
               ),
             ],
@@ -203,7 +226,11 @@ class SubtitleControlPanel extends ConsumerWidget {
     return names[language] ?? language;
   }
 
-  void _showDownloadDialog(BuildContext context, WidgetRef ref) {
+  void _showDownloadDialog(
+    BuildContext context,
+    WidgetRef ref, {
+    Function(String)? onLanguageSelected,
+  }) {
     final languages = SubtitleService.getLanguageCodes();
 
     showDialog(
@@ -220,14 +247,41 @@ class SubtitleControlPanel extends ConsumerWidget {
               return ListTile(
                 leading: Text(_getLanguageFlag(entry.key)),
                 title: Text(entry.value),
-                onTap: () {
+                onTap: () async {
                   Navigator.of(context).pop();
-                  // TODO: Implement subtitle download
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text('Downloading ${entry.value} subtitles...'),
-                    ),
-                  );
+                  final videoState = ref.read(videoPlayerControllerProvider);
+                  if (videoState.videoPath != null) {
+                    if (!context.mounted) return;
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Downloading subtitles...')),
+                    );
+
+                    final downloadedPath =
+                        await SubtitleService.downloadSubtitle(
+                          videoState.videoPath!,
+                          entry.key,
+                        );
+
+                    if (!context.mounted) return;
+
+                    if (downloadedPath != null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Subtitle downloaded successfully!'),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                      onLanguageSelected?.call(entry.key);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Failed to download subtitle'),
+                          backgroundColor: Colors.red,
+                        ),
+                      );
+                    }
+                  }
                 },
               );
             },
@@ -257,6 +311,82 @@ class SubtitleSettingsWidget extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 16),
+
+          // Subtitle size
+          const Text(
+            'Subtitle Size',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 8),
+          StatefulBuilder(
+            builder: (context, setState) {
+              return FutureBuilder<String>(
+                future: SettingsService.getSubtitleSize(),
+                builder: (context, snapshot) {
+                  final currentSize = snapshot.data ?? 'Medium';
+                  final sizes = ['Small', 'Medium', 'Large'];
+                  return Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: sizes
+                        .map(
+                          (size) => GestureDetector(
+                            onTap: () {
+                              SettingsService.setSubtitleSize(size);
+                              setState(() {});
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              margin: const EdgeInsets.symmetric(vertical: 2),
+                              decoration: BoxDecoration(
+                                color: currentSize == size
+                                    ? Colors.blue.withValues(alpha: 0.2)
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(
+                                  color: currentSize == size
+                                      ? Colors.blue
+                                      : Colors.grey,
+                                ),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    currentSize == size
+                                        ? Icons.radio_button_checked
+                                        : Icons.radio_button_unchecked,
+                                    color: currentSize == size
+                                        ? Colors.blue
+                                        : Colors.grey,
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Text(
+                                    size,
+                                    style: TextStyle(
+                                      color: currentSize == size
+                                          ? Colors.blue
+                                          : Colors.white,
+                                      fontWeight: currentSize == size
+                                          ? FontWeight.bold
+                                          : FontWeight.normal,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  );
+                },
+              );
+            },
+          ),
+
+          const SizedBox(height: 12),
 
           // Font size
           _buildSettingItem(
@@ -337,25 +467,73 @@ class SubtitleSettingsWidget extends ConsumerWidget {
   }
 
   void _showFontSizeDialog(BuildContext context, WidgetRef ref) {
-    final sizes = ['Small', 'Medium', 'Large', 'Extra Large'];
-
+    final sizes = ['Small', 'Medium', 'Large'];
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Font Size'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: sizes
-              .map(
-                (size) => RadioListTile<String>(
-                  title: Text(size),
-                  value: size,
-                  selected: 'Medium' == size, // TODO: Get from settings
-                  toggleable: true,
-                ),
-              )
-              .toList(),
-        ),
+      builder: (context) => FutureBuilder<String>(
+        future: SettingsService.getSubtitleSize(),
+        builder: (context, snapshot) {
+          final currentSize = snapshot.data ?? 'Medium';
+          return AlertDialog(
+            title: const Text('Font Size'),
+            content: StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: sizes
+                      .map(
+                        (size) => GestureDetector(
+                          onTap: () {
+                            SettingsService.setSubtitleSize(size);
+                            Navigator.of(context).pop();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            decoration: BoxDecoration(
+                              color: currentSize == size
+                                  ? Colors.blue.withValues(alpha: 0.2)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: currentSize == size
+                                    ? Colors.blue
+                                    : Colors.grey,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  currentSize == size
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: currentSize == size
+                                      ? Colors.blue
+                                      : Colors.grey,
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  size,
+                                  style: TextStyle(
+                                    color: currentSize == size
+                                        ? Colors.blue
+                                        : Colors.white,
+                                    fontWeight: currentSize == size
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                );
+              },
+            ),
+          );
+        },
       ),
     );
   }
@@ -365,21 +543,70 @@ class SubtitleSettingsWidget extends ConsumerWidget {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Font Color'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: colors
-              .map(
-                (color) => RadioListTile<String>(
-                  title: Text(color),
-                  value: color,
-                  selected: 'White' == color, // TODO: Get from settings
-                  toggleable: true,
-                ),
-              )
-              .toList(),
-        ),
+      builder: (context) => FutureBuilder<String>(
+        future: SettingsService.getSubtitleColor(),
+        builder: (context, snapshot) {
+          final currentColor = snapshot.data ?? 'White';
+          return AlertDialog(
+            title: const Text('Font Color'),
+            content: StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: colors
+                      .map(
+                        (color) => GestureDetector(
+                          onTap: () {
+                            SettingsService.setSubtitleColor(color);
+                            Navigator.of(context).pop();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            decoration: BoxDecoration(
+                              color: currentColor == color
+                                  ? Colors.blue.withValues(alpha: 0.2)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: currentColor == color
+                                    ? Colors.blue
+                                    : Colors.grey,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  currentColor == color
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: currentColor == color
+                                      ? Colors.blue
+                                      : Colors.grey,
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  color,
+                                  style: TextStyle(
+                                    color: currentColor == color
+                                        ? Colors.blue
+                                        : Colors.white,
+                                    fontWeight: currentColor == color
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                );
+              },
+            ),
+          );
+        },
       ),
     );
   }
@@ -389,21 +616,70 @@ class SubtitleSettingsWidget extends ConsumerWidget {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Background'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: backgrounds
-              .map(
-                (bg) => RadioListTile<String>(
-                  title: Text(bg),
-                  value: bg,
-                  selected: 'Semi-transparent' == bg, // TODO: Get from settings
-                  toggleable: true,
-                ),
-              )
-              .toList(),
-        ),
+      builder: (context) => FutureBuilder<String>(
+        future: SettingsService.getSubtitleBackgroundColor(),
+        builder: (context, snapshot) {
+          final currentBg = snapshot.data ?? 'Semi-transparent';
+          return AlertDialog(
+            title: const Text('Background'),
+            content: StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: backgrounds
+                      .map(
+                        (bg) => GestureDetector(
+                          onTap: () {
+                            SettingsService.setSubtitleBackgroundColor(bg);
+                            Navigator.of(context).pop();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            decoration: BoxDecoration(
+                              color: currentBg == bg
+                                  ? Colors.blue.withValues(alpha: 0.2)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: currentBg == bg
+                                    ? Colors.blue
+                                    : Colors.grey,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  currentBg == bg
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: currentBg == bg
+                                      ? Colors.blue
+                                      : Colors.grey,
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  bg,
+                                  style: TextStyle(
+                                    color: currentBg == bg
+                                        ? Colors.blue
+                                        : Colors.white,
+                                    fontWeight: currentBg == bg
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                );
+              },
+            ),
+          );
+        },
       ),
     );
   }
@@ -413,21 +689,70 @@ class SubtitleSettingsWidget extends ConsumerWidget {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Position'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: positions
-              .map(
-                (pos) => RadioListTile<String>(
-                  title: Text(pos),
-                  value: pos,
-                  selected: 'Bottom' == pos, // TODO: Get from settings
-                  toggleable: true,
-                ),
-              )
-              .toList(),
-        ),
+      builder: (context) => FutureBuilder<String>(
+        future: SettingsService.getSubtitlePosition(),
+        builder: (context, snapshot) {
+          final currentPos = snapshot.data ?? 'Bottom';
+          return AlertDialog(
+            title: const Text('Position'),
+            content: StatefulBuilder(
+              builder: (context, setState) {
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: positions
+                      .map(
+                        (pos) => GestureDetector(
+                          onTap: () {
+                            SettingsService.setSubtitlePosition(pos);
+                            Navigator.of(context).pop();
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            margin: const EdgeInsets.symmetric(vertical: 2),
+                            decoration: BoxDecoration(
+                              color: currentPos == pos
+                                  ? Colors.blue.withValues(alpha: 0.2)
+                                  : Colors.transparent,
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: currentPos == pos
+                                    ? Colors.blue
+                                    : Colors.grey,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  currentPos == pos
+                                      ? Icons.radio_button_checked
+                                      : Icons.radio_button_unchecked,
+                                  color: currentPos == pos
+                                      ? Colors.blue
+                                      : Colors.grey,
+                                ),
+                                const SizedBox(width: 12),
+                                Text(
+                                  pos,
+                                  style: TextStyle(
+                                    color: currentPos == pos
+                                        ? Colors.blue
+                                        : Colors.white,
+                                    fontWeight: currentPos == pos
+                                        ? FontWeight.bold
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                );
+              },
+            ),
+          );
+        },
       ),
     );
   }

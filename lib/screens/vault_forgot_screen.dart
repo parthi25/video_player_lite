@@ -89,7 +89,9 @@ class _VaultForgotScreenState extends State<VaultForgotScreen> {
           builder: (context) => AlertDialog(
             title: const Text('Password Reset'),
             content: const Text(
-              'Your password has been reset to: private123\n\nPlease change it after logging in.',
+              'Your Main Password has been reset to: private123\n'
+              'Your Decoy Password has been reset to: decoy123\n\n'
+              'Please change these immediately after logging in.',
             ),
             backgroundColor: Colors.grey.shade900,
             titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),

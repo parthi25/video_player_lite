@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../services/system_controls_service.dart';
 
 class BrightnessControlService {
   static double _currentBrightness = 0.5;
@@ -8,12 +9,14 @@ class BrightnessControlService {
 
   static Future<void> setBrightness(double brightness) async {
     _currentBrightness = brightness.clamp(0.0, 1.0);
-    // TODO: Implement actual system brightness control using platform channels
-    debugPrint('Brightness set to: ${(_currentBrightness * 100).round()}%');
+    await SystemControlsService.setBrightness(_currentBrightness);
+    debugPrint(
+      'System brightness set to: ${(_currentBrightness * 100).round()}%',
+    );
   }
 
   static Future<double> getSystemBrightness() async {
-    // TODO: Get actual system brightness using platform channels
+    _currentBrightness = await SystemControlsService.getCurrentBrightness();
     return _currentBrightness;
   }
 }
@@ -25,12 +28,12 @@ class VolumeControlService {
 
   static Future<void> setVolume(double volume) async {
     _currentVolume = volume.clamp(0.0, 1.0);
-    // TODO: Implement actual system volume control using platform channels
-    debugPrint('Volume set to: ${(_currentVolume * 100).round()}%');
+    await SystemControlsService.setVolume(_currentVolume);
+    debugPrint('System volume set to: ${(_currentVolume * 100).round()}%');
   }
 
   static Future<double> getSystemVolume() async {
-    // TODO: Get actual system volume using platform channels
+    _currentVolume = await SystemControlsService.getCurrentVolume();
     return _currentVolume;
   }
 }
