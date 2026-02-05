@@ -41,7 +41,7 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
     PerformanceService.initialize();
     PerformanceService.optimizeForVideoPlayback();
     _initializeVideo();
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final videoState = ref.read(videoPlayerControllerProvider);
       if (videoState.type == MediaType.audio) {
@@ -122,85 +122,118 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
       onRetry: () => _initializeVideo(),
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: SafeArea(
-          child: Stack(
-            children: [
-              if (videoState.isInitialized)
-                NextGestureDetector(
-                  onSeek: (position) {
-                    ref.read(videoPlayerControllerProvider.notifier).seekTo(position);
-                  },
-                  onVolumeChanged: (volume) {
-                    ref.read(videoPlayerControllerProvider.notifier).setVolume(volume);
-                  },
-                  onBrightnessChanged: (brightness) async {
-                    try {
-                      await SystemControlsService.setBrightness(brightness);
-                    } catch (e) {
-                      debugPrint('Error setting brightness: $e');
-                    }
-                  },
-                  child: Container(
-                    color: Colors.black,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        Center(
-                          child: Consumer(
-                            builder: (context, ref, child) {
-                              final currentRatio = ref.watch(
-                                videoPlayerControllerProvider.select((s) => s.aspectRatio),
-                              );
-                              final videoController = ref.watch(
-                                videoPlayerControllerProvider.select((s) => s.videoController),
-                              );
-                              final mediaType = ref.watch(
-                                videoPlayerControllerProvider.select((s) => s.type),
-                              );
+        body: Stack(
+          children: [
+            if (videoState.isInitialized)
+              NextGestureDetector(
+                onSeek: (position) {
+                  ref
+                      .read(videoPlayerControllerProvider.notifier)
+                      .seekTo(position);
+                },
+                onVolumeChanged: (volume) {
+                  ref
+                      .read(videoPlayerControllerProvider.notifier)
+                      .setVolume(volume);
+                },
+                onBrightnessChanged: (brightness) async {
+                  try {
+                    await SystemControlsService.setBrightness(brightness);
+                  } catch (e) {
+                    debugPrint('Error setting brightness: $e');
+                  }
+                },
+                child: Container(
+                  color: Colors.black,
+                  width: double.infinity,
+                  height: double.infinity,
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      Center(
+                        child: Consumer(
+                          builder: (context, ref, child) {
+                            final currentRatio = ref.watch(
+                              videoPlayerControllerProvider.select(
+                                (s) => s.aspectRatio,
+                              ),
+                            );
+                            final videoController = ref.watch(
+                              videoPlayerControllerProvider.select(
+                                (s) => s.videoController,
+                              ),
+                            );
+                            final mediaType = ref.watch(
+                              videoPlayerControllerProvider.select(
+                                (s) => s.type,
+                              ),
+                            );
 
-                              if (videoController == null) {
-                                return const SizedBox.shrink();
-                              }
+                            if (videoController == null) {
+                              return const SizedBox.shrink();
+                            }
 
-                              if (mediaType == MediaType.audio) {
-                                return _buildAudioPlayerUI();
-                              }
+                            if (mediaType == MediaType.audio) {
+                              return _buildAudioPlayerUI();
+                            }
 
-                              Widget videoWidget = Video(
-                                controller: videoController,
-                                fit: BoxFit.contain,
-                                controls: NoVideoControls,
+                            Widget videoWidget = Video(
+                              controller: videoController,
+                              fit: BoxFit.contain,
+                              controls: NoVideoControls,
+                              width: double.infinity,
+                              height: double.infinity,
+                            );
+
+                            if (currentRatio > 0 &&
+                                mediaType == MediaType.video) {
+                              return AspectRatio(
+                                aspectRatio: currentRatio,
+                                child: videoWidget,
                               );
-
-                              if (currentRatio > 0 && mediaType == MediaType.video) {
-                                return AspectRatio(
-                                  aspectRatio: currentRatio,
-                                  child: videoWidget,
-                                );
-                              }
-                              return videoWidget;
-                            },
-                          ),
+                            }
+                            return videoWidget;
+                          },
                         ),
-                        Consumer(
+                      ),
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Consumer(
                           builder: (context, ref, child) {
                             final isLoaded = ref.watch(
-                              videoPlayerControllerProvider.select((s) => s.isLoaded),
+                              videoPlayerControllerProvider.select(
+                                (s) => s.isLoaded,
+                              ),
                             );
                             if (!isLoaded) return const SizedBox.shrink();
                             return const NextPlayerControls();
                           },
                         ),
-                        Consumer(
+                      ),
+                      Positioned(
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        child: Consumer(
                           builder: (context, ref, child) {
                             final position = ref.watch(
-                              videoPlayerControllerProvider.select((s) => s.position),
+                              videoPlayerControllerProvider.select(
+                                (s) => s.position,
+                              ),
                             );
                             final subtitles = ref.watch(
-                              videoPlayerControllerProvider.select((s) => s.subtitles),
+                              videoPlayerControllerProvider.select(
+                                (s) => s.subtitles,
+                              ),
                             );
                             final subtitlePath = ref.watch(
-                              videoPlayerControllerProvider.select((s) => s.subtitlePath),
+                              videoPlayerControllerProvider.select(
+                                (s) => s.subtitlePath,
+                              ),
                             );
 
                             if (subtitles.isEmpty || subtitlePath == null) {
@@ -213,13 +246,13 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
                             );
                           },
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
-              if (isLoading) _buildLoadingIndicator(),
-            ],
-          ),
+              ),
+            if (isLoading) _buildLoadingIndicator(),
+          ],
         ),
       ),
     );
@@ -256,12 +289,20 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
                   end: Alignment.bottomRight,
                 ),
               ),
-              child: const Icon(Icons.music_note_rounded, size: 100, color: Colors.white),
+              child: const Icon(
+                Icons.music_note_rounded,
+                size: 100,
+                color: Colors.white,
+              ),
             ),
             const SizedBox(height: 40),
             const Text(
               'Playing Audio',
-              style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.bold),
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),

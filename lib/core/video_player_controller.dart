@@ -205,87 +205,145 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
       );
 
       final player = Player();
-      if (state.useHwDec) {
-        if (player.platform is NativePlayer) {
-          (player.platform as NativePlayer).setProperty('hwdec', 'auto');
+
+      // Set hardware decoding with error handling
+      try {
+        if (state.useHwDec) {
+          if (player.platform is NativePlayer) {
+            (player.platform as NativePlayer).setProperty('hwdec', 'auto');
+          }
+        } else {
+          if (player.platform is NativePlayer) {
+            (player.platform as NativePlayer).setProperty('hwdec', 'no');
+          }
         }
-      } else {
-        if (player.platform is NativePlayer) {
-          (player.platform as NativePlayer).setProperty('hwdec', 'no');
-        }
+      } catch (e) {
+        debugPrint('Hardware decoding setup error: $e');
+        // Continue without hardware decoding if setup fails
       }
+
       final videoController = VideoController(player);
 
-      _subscriptions.add(
-        player.stream.position.listen((position) {
-          state = state.copyWith(position: position);
-        }),
-      );
+      // Add stream subscriptions with error handling
+      try {
+        _subscriptions.add(
+          player.stream.position.listen(
+            (position) {
+              if (mounted) {
+                state = state.copyWith(position: position);
+              }
+            },
+            onError: (error) {
+              debugPrint('Position stream error: $error');
+            },
+          ),
+        );
 
-      _subscriptions.add(
-        player.stream.duration.listen((duration) {
-          state = state.copyWith(duration: duration);
-        }),
-      );
+        _subscriptions.add(
+          player.stream.duration.listen(
+            (duration) {
+              if (mounted) {
+                state = state.copyWith(duration: duration);
+              }
+            },
+            onError: (error) {
+              debugPrint('Duration stream error: $error');
+            },
+          ),
+        );
 
-      _subscriptions.add(
-        player.stream.buffer.listen((buffer) {
-          state = state.copyWith(bufferDuration: buffer);
-        }),
-      );
+        _subscriptions.add(
+          player.stream.buffer.listen(
+            (buffer) {
+              if (mounted) {
+                state = state.copyWith(bufferDuration: buffer);
+              }
+            },
+            onError: (error) {
+              debugPrint('Buffer stream error: $error');
+            },
+          ),
+        );
 
-      _subscriptions.add(
-        player.stream.playing.listen((isPlaying) {
-          state = state.copyWith(isPlaying: isPlaying);
-        }),
-      );
+        _subscriptions.add(
+          player.stream.playing.listen(
+            (isPlaying) {
+              if (mounted) {
+                state = state.copyWith(isPlaying: isPlaying);
+              }
+            },
+            onError: (error) {
+              debugPrint('Playing stream error: $error');
+            },
+          ),
+        );
 
-      _subscriptions.add(
-        player.stream.volume.listen((volume) {
-          state = state.copyWith(volume: volume);
-        }),
-      );
+        _subscriptions.add(
+          player.stream.volume.listen(
+            (volume) {
+              if (mounted) {
+                state = state.copyWith(volume: volume);
+              }
+            },
+            onError: (error) {
+              debugPrint('Volume stream error: $error');
+            },
+          ),
+        );
 
-      _subscriptions.add(
-        player.stream.error.listen((error) {
-          debugPrint('MediaKit Error: $error');
-          state = state.copyWith(
-            hasError: true,
-            errorMessage: 'Playback error: $error',
-            isPlaying: false,
-          );
-        }),
-      );
+        _subscriptions.add(
+          player.stream.error.listen((error) {
+            debugPrint('MediaKit Error: $error');
+            if (mounted) {
+              state = state.copyWith(
+                hasError: true,
+                errorMessage: 'Playback error: $error',
+                isPlaying: false,
+              );
+            }
+          }),
+        );
+      } catch (e) {
+        debugPrint('Stream subscription error: $e');
+      }
 
       Media? media;
-      if (videoUrl != null) {
-        media = Media(videoUrl);
-      } else if (videoPath != null) {
-        media = Media(videoPath);
+      try {
+        if (videoUrl != null && videoUrl.isNotEmpty) {
+          media = Media(videoUrl);
+        } else if (videoPath != null && videoPath.isNotEmpty) {
+          media = Media(videoPath);
+        }
+      } catch (e) {
+        debugPrint('Media creation error: $e');
       }
 
       if (media == null) {
-        throw Exception('No media source provided');
+        throw Exception('No valid media source provided');
       }
 
-      await player.open(media, play: true);
+      await player.open(media, play: false); // Don't auto-play initially
 
-      state = state.copyWith(
-        player: player,
-        videoController: videoController,
-        isInitialized: true,
-        isLoaded: true,
-        isPlaying: true,
-        volume: 100.0,
-      );
+      if (mounted) {
+        state = state.copyWith(
+          player: player,
+          videoController: videoController,
+          isInitialized: true,
+          isLoaded: true,
+          isPlaying: false, // Start paused
+          volume: 100.0,
+        );
+      }
     } catch (e) {
       debugPrint('Video initialization error: $e');
       await _disposePlayer();
-      state = state.copyWith(
-        isInitialized: false,
-        hasError: true,
-        errorMessage: 'Failed to initialize video: $e',
-      );
+      if (mounted) {
+        state = state.copyWith(
+          isInitialized: false,
+          hasError: true,
+          errorMessage: 'Failed to initialize video: $e',
+        );
+      }
     }
   }
 
@@ -414,7 +472,9 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         break;
       case PlayerOrientation.landscape:
         newOrientation = PlayerOrientation.portrait;
-        await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+        await SystemChrome.setPreferredOrientations([
+          DeviceOrientation.portraitUp,
+        ]);
         break;
       case PlayerOrientation.portrait:
         newOrientation = PlayerOrientation.auto;
@@ -434,9 +494,7 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
       final canUsePip = await _floating.isPipAvailable;
       if (canUsePip) {
         final result = await _floating.enable(
-          ImmediatePiP(
-            aspectRatio: const Rational.landscape(),
-          ),
+          ImmediatePiP(aspectRatio: const Rational.landscape()),
         );
         if (result == PiPStatus.enabled) {
           state = state.copyWith(isInPip: true);
