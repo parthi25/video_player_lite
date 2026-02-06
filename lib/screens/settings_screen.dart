@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'about_screen.dart';
 import '../services/theme_service.dart';
+import '../services/performance_service.dart';
 import '../widgets/settings_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -12,82 +13,95 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  bool _hardwareAcceleration = true;
-  bool _autoPlayNext = false;
+  // Performance State
+  late bool _hwDecoding;
+  late bool _frameDrop;
+  late bool _skipLoopFilter;
+  
+  // App State
   bool _skipSilence = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Load initial values from service
+    _hwDecoding = PerformanceService.isHardwareDecodingEnabled;
+    _frameDrop = PerformanceService.isFrameDropEnabled;
+    _skipLoopFilter = PerformanceService.isSkipLoopFilterEnabled;
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        title: const Text('Settings'),
+        centerTitle: false,
         elevation: 0,
-        title: const Text(
-          'Settings',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
+        backgroundColor: theme.scaffoldBackgroundColor,
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Theme Settings
-            SettingsSection(
-              title: 'Appearance',
-              icon: Icons.palette_outlined,
-              children: [_buildThemeToggle()],
-            ),
-
+            // Theme Section (Card Style)
+            _buildThemeSection(theme),
             const SizedBox(height: 24),
 
-            // Performance Settings
+            // Performance Settings (Functional)
             SettingsSection(
-              title: 'Performance',
-              icon: Icons.speed,
+              title: 'Playback & Performance',
+              icon: Icons.speed_rounded,
               children: [
                 _buildSwitchSetting(
                   'Hardware Acceleration',
-                  'Use GPU for video decoding',
-                  _hardwareAcceleration,
-                  (value) => setState(() => _hardwareAcceleration = value),
+                  'Use GPU for smooth video decoding',
+                  _hwDecoding,
+                  (value) {
+                     setState(() => _hwDecoding = value);
+                     PerformanceService.setHardwareDecoding(value);
+                  },
                 ),
                 _buildSwitchSetting(
-                  'Auto Play Next',
-                  'Automatically play next video',
-                  _autoPlayNext,
-                  (value) => setState(() => _autoPlayNext = value),
+                  'Frame Drop',
+                  'Skip frames to prevent audio lag',
+                  _frameDrop,
+                  (value) {
+                    setState(() => _frameDrop = value);
+                    PerformanceService.setFrameDrop(value);
+                  },
+                ),
+                _buildSwitchSetting(
+                  'Speedup Mode (Skip Filter)',
+                  'Disable deblocking for max speed (Low quality)',
+                  _skipLoopFilter,
+                  (value) {
+                    setState(() => _skipLoopFilter = value);
+                    PerformanceService.setSkipLoopFilter(value);
+                  },
                 ),
               ],
             ),
 
             const SizedBox(height: 24),
 
-            // More Settings Navigation
+            // Advanced Navigation
             SettingsSection(
-              title: 'Advanced',
-              icon: Icons.tune,
+              title: 'Advanced Features',
+              icon: Icons.tune_rounded,
               children: [
                 _buildNavigationSetting(
                   'File Browser',
-                  'Browse media files with advanced options',
-                  Icons.folder_open,
-                  () {
-                    Navigator.of(context).pushNamed('/next-browser');
-                  },
-                ),
-                _buildNavigationSetting(
-                  'Playback Tuning',
-                  'Finetune skip duration and gestures',
-                  Icons.slow_motion_video,
-                  () {},
+                  'Manage folders and view hidden files',
+                  Icons.folder_open_rounded,
+                  () => Navigator.of(context).pushNamed('/next-browser'),
                 ),
                 _buildSwitchSetting(
                   'Skip Silence',
-                  'Skip silent parts in videos',
+                  'Automatically skip silent parts',
                   _skipSilence,
                   (value) => setState(() => _skipSilence = value),
                 ),
@@ -96,27 +110,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
             const SizedBox(height: 24),
 
-            // Information & About
+            // Info Section
             SettingsSection(
-              title: 'Information',
-              icon: Icons.info_outline,
+              title: 'About',
+              icon: Icons.info_outline_rounded,
               children: [
                 _buildNavigationSetting(
-                  'About NEXT PLAYER',
-                  'Version, updates, and more',
-                  Icons.help_outline,
-                  () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const AboutScreen(),
-                      ),
-                    );
-                  },
+                  'About Parthi Play',
+                  'Version 1.0.0 • Build 2024',
+                  Icons.android,
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const AboutScreen()),
+                  ),
                 ),
                 _buildNavigationSetting(
                   'Privacy Policy',
-                  'How we handle your data',
+                  'Local storage only. No tracking.',
                   Icons.privacy_tip_outlined,
                   () => _showPrivacyPolicy(context),
                 ),
@@ -129,46 +139,119 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildThemeToggle() {
+  Widget _buildThemeSection(ThemeData theme) {
     final themeMode = ref.watch(themeModeProvider);
     final isDark = themeMode == ThemeMode.dark;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Dark Mode',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  isDark
-                      ? 'Currently using Dark theme'
-                      : 'Switch to Dark theme',
-                  style: TextStyle(color: Colors.grey[400], fontSize: 14),
-                ),
-              ],
-            ),
-          ),
-          Switch(
-            value: isDark,
-            onChanged: (v) {
-              ref
-                  .read(themeModeProvider.notifier)
-                  .setTheme(v ? ThemeMode.dark : ThemeMode.light);
-            },
-            activeThumbColor: Colors.red,
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: theme.cardTheme.color,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
           ),
         ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.purple.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Icon(Icons.palette_rounded, color: Colors.purple),
+              ),
+              const SizedBox(width: 16),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Appearance',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: theme.textTheme.bodyLarge?.color,
+                    ),
+                  ),
+                  Text(
+                    'Customize app look',
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.6),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: _buildThemeCard(
+                  'Light',
+                  Icons.wb_sunny_rounded,
+                  !isDark,
+                  () => ref.read(themeModeProvider.notifier).setTheme(ThemeMode.light),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _buildThemeCard(
+                  'Dark',
+                  Icons.nightlight_round,
+                  isDark,
+                  () => ref.read(themeModeProvider.notifier).setTheme(ThemeMode.dark),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildThemeCard(String label, IconData icon, bool isSelected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: isSelected 
+              ? Colors.red.withValues(alpha: 0.1) 
+              : Colors.grey.withValues(alpha: 0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? Colors.red : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              icon,
+              color: isSelected ? Colors.red : Colors.grey,
+              size: 28,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? Colors.red : Colors.grey,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -179,6 +262,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     bool value,
     Function(bool) onChanged,
   ) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -189,16 +273,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: theme.textTheme.bodyLarge?.color,
                     fontSize: 16,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 4),
                 Text(
                   description,
-                  style: TextStyle(color: Colors.grey[400], fontSize: 14),
+                  style: TextStyle(
+                    color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                    fontSize: 13,
+                  ),
                 ),
               ],
             ),
@@ -206,7 +293,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeThumbColor: Colors.red,
+            activeColor: Colors.white,
+            activeTrackColor: Colors.red,
           ),
         ],
       ),
@@ -219,62 +307,120 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     IconData icon,
     VoidCallback onTap,
   ) {
+    final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: InkWell(
         onTap: onTap,
-        child: Row(
-          children: [
-            Icon(icon, color: Colors.grey[400], size: 24),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    description,
-                    style: TextStyle(color: Colors.grey[400], fontSize: 14),
-                  ),
-                ],
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  icon,
+                  color: theme.colorScheme.primary,
+                  size: 22,
+                ),
               ),
-            ),
-            Icon(Icons.arrow_forward_ios, color: Colors.grey[400], size: 16),
-          ],
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: TextStyle(
+                        color: theme.textTheme.bodyLarge?.color,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      description,
+                      style: TextStyle(
+                        color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+                size: 24,
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
   void _showPrivacyPolicy(BuildContext context) {
-    showDialog(
+    final theme = Theme.of(context);
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
-          'Privacy Policy',
-          style: TextStyle(color: Colors.white),
+      backgroundColor: theme.scaffoldBackgroundColor,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Privacy Policy',
+              style: TextStyle(
+                fontSize: 24, 
+                fontWeight: FontWeight.bold,
+                color: theme.textTheme.titleLarge?.color
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'We respect your privacy. All your private videos, passwords, and playback history are stored strictly locally on your device.',
+              style: TextStyle(
+                fontSize: 16, 
+                height: 1.5,
+                color: theme.textTheme.bodyMedium?.color
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '• No data upload to servers.\n• No tracking or analytics.\n• Offline-first design.',
+              style: TextStyle(
+                fontSize: 14, 
+                height: 1.6,
+                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.8)
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Close'),
+              ),
+            ),
+          ],
         ),
-        content: const SingleChildScrollView(
-          child: Text(
-            'All your private videos and passwords are stored locally on your device. We do not collect or share any personal data.',
-            style: TextStyle(color: Colors.white70),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
       ),
     );
   }

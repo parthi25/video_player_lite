@@ -3,11 +3,21 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/painting.dart';
 import 'package:flutter/services.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PerformanceService {
   static bool _isLowEndDevice = false;
   static bool _isInitialized = false;
   static bool _isOptimizedForVideo = false;
+  static bool _isMediaTek = false;
+  static bool? _forcedHwDec;
+  static bool? _forcedFrameDrop;
+  static bool? _forcedSkipLoopFilter;
+
+  // Keys for persistence
+  static const String _hwDecKey = 'perf_hw_dec';
+  static const String _frameDropKey = 'perf_frame_drop';
+  static const String _skipLoopKey = 'perf_skip_loop';
 
   static Future<void> initialize() async {
     if (_isInitialized) return;
@@ -16,9 +26,20 @@ class PerformanceService {
       if (Platform.isAndroid) {
         final androidInfo = await DeviceInfoPlugin().androidInfo;
         final sdkInt = androidInfo.version.sdkInt;
+        final hardware = androidInfo.hardware.toLowerCase();
+        final brand = androidInfo.brand.toLowerCase();
+        final manufacturer = androidInfo.manufacturer.toLowerCase();
 
-        // Consider devices with Android < 8 as low-end
-        _isLowEndDevice = sdkInt < 26;
+        // Detect MediaTek devices
+        _isMediaTek = hardware.contains('mt') || 
+                      hardware.contains('helio') || 
+                      brand.contains('vivo') || // Many Vivo phones are MTK
+                      manufacturer.contains('vivo');
+
+        debugPrint('Device Hardware: $hardware, Brand: $brand, IsMediaTek: $_isMediaTek');
+
+        // Consider devices with Android < 8 or MediaTek P35/G35 class as low-end
+        _isLowEndDevice = sdkInt < 26 || _isMediaTek;
       } else if (Platform.isIOS) {
         final iosInfo = await DeviceInfoPlugin().iosInfo;
         final model = iosInfo.model;
@@ -33,8 +54,42 @@ class PerformanceService {
       _isLowEndDevice = true; // Assume low-end on error
     }
 
+    await _loadSettings();
     _isInitialized = true;
   }
+
+  static Future<void> _loadSettings() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      _forcedHwDec = prefs.getBool(_hwDecKey);
+      _forcedFrameDrop = prefs.getBool(_frameDropKey);
+      _forcedSkipLoopFilter = prefs.getBool(_skipLoopKey);
+    } catch (e) {
+      debugPrint('Error loading performance settings: $e');
+    }
+  }
+
+  static Future<void> setHardwareDecoding(bool enable) async {
+    _forcedHwDec = enable;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_hwDecKey, enable);
+  }
+
+  static Future<void> setFrameDrop(bool enable) async {
+    _forcedFrameDrop = enable;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_frameDropKey, enable);
+  }
+
+  static Future<void> setSkipLoopFilter(bool enable) async {
+    _forcedSkipLoopFilter = enable;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_skipLoopKey, enable);
+  }
+
+  static bool get isHardwareDecodingEnabled => _forcedHwDec ?? true; // Default true
+  static bool get isFrameDropEnabled => _forcedFrameDrop ?? _isLowEndDevice; // Default depend on device
+  static bool get isSkipLoopFilterEnabled => _forcedSkipLoopFilter ?? _isLowEndDevice; // Default depend on device
 
   static Future<void> optimizeForVideoPlayback() async {
     if (_isOptimizedForVideo) return;
@@ -150,5 +205,81 @@ class PerformanceService {
     return const Duration(
       milliseconds: 200,
     ); // More frequent updates on better devices
+  }
+
+  // OPTIMIZED PLAYER CONFIGURATION
+
+  static String getOptimalVideoSync() {
+    // 'display-resample' is very CPU intensive. 'audio' is efficient.
+    return 'audio';
+  }
+
+  static bool shouldEnableInterpolation() {
+    // Interpolation is GPU/CPU intensive. Disable for mobile.
+    return false;
+  }
+
+  static String getOptimalDemuxerCache() {
+    if (_isLowEndDevice) {
+      return '64M'; // Increased to standard to prevent starvation on 4K
+    }
+    return '128M';
+  }
+
+  static String getOptimalHardwareDecoder() {
+    if (_forcedHwDec == false) return 'no';
+    return Platform.isAndroid ? 'mediacodec' : 'auto';
+  }
+
+  static String getSkipLoopFilter() {
+    if (_forcedSkipLoopFilter == true) return 'all';
+    if (_forcedSkipLoopFilter == false) return 'no';
+    
+    if (_isLowEndDevice) {
+      return 'all'; // Skip ALL deblocking (fastest, slight visual blocking)
+    }
+    return 'no';
+  }
+
+  static int getOptimalThreads() {
+    // MediaTek P35 is Octa-core. 
+    // Using too many threads can cause context switching overhead.
+    // 4 is a safe sweet spot for mobile SW decoding.
+    if (_isLowEndDevice) {
+      return 4;
+    }
+    return 0; // Auto
+  }
+
+  // EXPLICIT OPTIMIZATION PROFILES
+
+  /// Flags specifically for Software Decoding (CPU)
+  static Map<String, String> getSoftwareDecoderFlags() {
+    return {
+      'hwdec': 'no',
+      'vd-lavc-threads': getOptimalThreads().toString(),
+      'sws-scaler': 'fast-bilinear', // Fastest scaling algorithm
+      'vd-lavc-skiploopfilter': 'all', // Crucial for SW decoding speed
+      'framedrop': 'decoder', // Aggressively drop frames at decoder level
+      'video-sync': 'audio',
+    };
+  }
+
+  /// Flags specifically for Hardware Decoding (GPU)
+  static Map<String, String> getHardwareDecoderFlags() {
+    return {
+      'hwdec': platformHardwareDecoder,
+      'vd-lavc-threads': '0', // HW decoders usually manage their own threads
+      'vd-lavc-skiploopfilter': getSkipLoopFilter(),
+      'framedrop': isFrameDropEnabled ? 'vo' : 'no', // Drop at video output if enabled
+      'video-sync': 'audio',
+      'opengl-glfinish': 'no',
+    };
+  }
+  
+  static String get platformHardwareDecoder {
+    if (_forcedHwDec == false) return 'no';
+    // Use 'mediacodec' (Zero-Copy) for best performance on Android
+    return Platform.isAndroid ? 'mediacodec' : 'auto';
   }
 }

@@ -50,10 +50,12 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
 
   @override
   Widget build(BuildContext context) {
-    final videoState = ref.watch(videoPlayerControllerProvider);
+    // Removed full state watch to prevent rebuilds
+    // final videoState = ref.watch(videoPlayerControllerProvider);
 
     return GestureDetector(
       onTap: () {
+        final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
         // Toggle controls visibility
         final videoController = ref.read(
@@ -62,6 +64,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
         videoController.toggleControls();
       },
       onDoubleTapDown: (details) {
+        final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
         final screenWidth = MediaQuery.of(context).size.width;
         final videoController = ref.read(
@@ -87,6 +90,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
         }
       },
       onLongPressStart: (details) {
+        final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
         final screenWidth = MediaQuery.of(context).size.width;
         final videoController = ref.read(
@@ -117,6 +121,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
         _endSpeedup();
       },
       onHorizontalDragStart: (details) {
+        final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
         _dragStartX = details.globalPosition.dx;
         _dragStartPosition = videoState.position;
@@ -127,6 +132,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
       onHorizontalDragUpdate: (details) {
         if (!_isSeeking) return;
 
+        final videoState = ref.read(videoPlayerControllerProvider);
         final screenWidth = MediaQuery.of(context).size.width;
         final deltaX = details.globalPosition.dx - _dragStartX;
         final percentage = deltaX / screenWidth;
@@ -154,6 +160,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
         }
       },
       onVerticalDragStart: (details) async {
+        final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
         _dragStartY = details.globalPosition.dy;
         final screenWidth = MediaQuery.of(context).size.width;
@@ -245,25 +252,24 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
               ),
             ),
 
-          // Volume indicator
+          // Volume indicator (Centered)
           if (_showVolumeIndicator)
-            Positioned(
-              right: 50,
-              top: MediaQuery.of(context).size.height * 0.4,
-              child: _buildVerticalIndicator(
-                Icons.volume_up,
+            Center(
+              child: _buildCenterIndicator(
+                _currentVolume > 0 
+                  ? (_currentVolume >= 0.5 ? Icons.volume_up : Icons.volume_down)
+                  : Icons.volume_off,
                 _currentVolume,
                 _currentVolume > 1.0 ? Colors.red : Colors.blue,
+                isVolume: true,
               ),
             ),
 
-          // Brightness indicator
+          // Brightness indicator (Centered)
           if (_showBrightnessIndicator)
-            Positioned(
-              left: 50,
-              top: MediaQuery.of(context).size.height * 0.4,
-              child: _buildVerticalIndicator(
-                Icons.brightness_6,
+            Center(
+              child: _buildCenterIndicator(
+                _currentBrightness > 0.5 ? Icons.brightness_7 : Icons.brightness_6,
                 _currentBrightness,
                 Colors.orange,
               ),
@@ -320,7 +326,14 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
               top: 100,
               left: 0,
               right: 0,
-              child: _buildSeekIndicator(videoState),
+              child: Consumer(
+                builder: (context, ref, child) {
+                  final duration = ref.watch(
+                    videoPlayerControllerProvider.select((s) => s.duration),
+                  );
+                  return _buildSeekIndicator(duration);
+                },
+              ),
             ),
         ],
       ),
@@ -348,54 +361,48 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
     });
   }
 
-  Widget _buildVerticalIndicator(IconData icon, double value, Color color) {
+  Widget _buildCenterIndicator(IconData icon, double value, Color color, {bool isVolume = false}) {
     // For volume boost, we show a special label
-    final isBoost = icon == Icons.volume_up && value > 1.0;
-
+    final isBoost = isVolume && value > 1.0;
+    // Normalize value for display (0-100% or more for boost)
+    final displayValue = (value * 100).round();
+    
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.8),
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.black.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            isBoost ? Icons.volume_up : icon,
+            icon,
             color: isBoost ? Colors.red : color,
-            size: 32,
+            size: 48,
           ),
-          const SizedBox(height: 8),
-          Container(
-            width: 4,
-            height: 120,
-            decoration: BoxDecoration(
-              color: Colors.grey[800],
-              borderRadius: BorderRadius.circular(2),
-            ),
-            child: Align(
-              alignment: Alignment.bottomCenter,
-              child: FractionallySizedBox(
-                heightFactor: value.clamp(0.0, 1.0),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: isBoost ? Colors.red : color,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           Text(
-            isBoost
-                ? 'Boost: ${(value * 100).round()}%'
-                : '${(value * 100).round()}%',
+            isBoost ? 'Boost: $displayValue%' : '$displayValue%',
             style: TextStyle(
               color: isBoost ? Colors.red : Colors.white,
-              fontSize: 12,
-              fontWeight: isBoost ? FontWeight.bold : FontWeight.normal,
+              fontSize: 24,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: 150,
+            height: 6,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(
+                value: isVolume ? (value / 2.0).clamp(0.0, 1.0) : value.clamp(0.0, 1.0),
+                backgroundColor: Colors.white24,
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  isBoost ? Colors.red : color,
+                ),
+              ),
             ),
           ),
         ],
@@ -403,10 +410,10 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
     );
   }
 
-  Widget _buildSeekIndicator(VideoPlayerState videoState) {
-    final percentage = videoState.duration.inMilliseconds > 0
+  Widget _buildSeekIndicator(Duration duration) {
+    final percentage = duration.inMilliseconds > 0
         ? (_seekPosition.inMilliseconds /
-              videoState.duration.inMilliseconds *
+              duration.inMilliseconds *
               100)
         : 0.0;
 

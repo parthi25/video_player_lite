@@ -26,60 +26,84 @@ class NextPlayerApp extends ConsumerWidget {
     final themeMode = ref.watch(themeModeProvider);
 
     return MaterialApp(
-      title: 'NEXT PLAYER',
+      title: 'Parthi Play',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
       theme: ThemeData(
         brightness: Brightness.light,
-        primarySwatch: Colors.red,
-        primaryColor: Colors.red,
-        scaffoldBackgroundColor: Colors.white,
-        appBarTheme: const AppBarTheme(
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.red,
+          brightness: Brightness.light,
+          primary: Colors.red.shade600,
+          secondary: Colors.orange.shade600,
+        ),
+        scaffoldBackgroundColor: const Color(0xFFF8F9FA),
+        appBarTheme: AppBarTheme(
           backgroundColor: Colors.white,
           elevation: 0,
-          foregroundColor: Colors.black,
-          centerTitle: true,
-          titleTextStyle: TextStyle(
-            color: Colors.black,
-            fontSize: 18,
+          foregroundColor: Colors.black87,
+          centerTitle: false,
+          titleTextStyle: const TextStyle(
+            color: Colors.black87,
+            fontSize: 20,
             fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
           ),
+          iconTheme: const IconThemeData(color: Colors.black87),
         ),
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          backgroundColor: Colors.white,
-          selectedItemColor: Colors.red,
-          unselectedItemColor: Colors.grey,
-          type: BottomNavigationBarType.fixed,
+        cardTheme: CardThemeData(
+          color: Colors.white,
+          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         ),
-        cardColor: Colors.grey[100],
         dividerColor: Colors.grey[300],
         useMaterial3: true,
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
       ),
       darkTheme: ThemeData(
         brightness: Brightness.dark,
-        primarySwatch: Colors.red,
-        primaryColor: Colors.red,
-        scaffoldBackgroundColor: Colors.black,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: Colors.red,
+          brightness: Brightness.dark,
+          primary: Colors.red.shade600,
+          secondary: Colors.orange.shade600,
+          surface: const Color(0xFF1A1A1A),
+          onSurface: Colors.white,
+        ),
+        scaffoldBackgroundColor: const Color(0xFF0A0A0A),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.black,
+          backgroundColor: Color(0xFF0A0A0A),
           elevation: 0,
           foregroundColor: Colors.white,
-          centerTitle: true,
+          centerTitle: false,
           titleTextStyle: TextStyle(
             color: Colors.white,
-            fontSize: 18,
+            fontSize: 20,
             fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
           ),
+          iconTheme: IconThemeData(color: Colors.white),
         ),
-        bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-          backgroundColor: Colors.black,
-          selectedItemColor: Colors.red,
-          unselectedItemColor: Colors.grey,
-          type: BottomNavigationBarType.fixed,
+        cardTheme: CardThemeData(
+          color: const Color(0xFF1A1A1A),
+          elevation: 4,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         ),
-        cardColor: const Color(0xFF1E1E1E),
         dividerColor: const Color(0xFF2A2A2A),
         useMaterial3: true,
+        pageTransitionsTheme: const PageTransitionsTheme(
+          builders: {
+            TargetPlatform.android: FadeUpwardsPageTransitionsBuilder(),
+            TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
+          },
+        ),
       ),
       initialRoute: '/',
       routes: {

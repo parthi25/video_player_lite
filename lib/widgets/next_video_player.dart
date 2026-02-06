@@ -16,6 +16,7 @@ class NextVideoPlayer extends ConsumerStatefulWidget {
   final bool autoPlay;
   final bool looping;
   final VoidCallback? onVideoEnded;
+  final VoidCallback? onBackPressed;
 
   const NextVideoPlayer({
     super.key,
@@ -24,6 +25,7 @@ class NextVideoPlayer extends ConsumerStatefulWidget {
     this.autoPlay = false,
     this.looping = false,
     this.onVideoEnded,
+    this.onBackPressed,
   });
 
   @override
@@ -31,37 +33,73 @@ class NextVideoPlayer extends ConsumerStatefulWidget {
 }
 
 class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
-  late VideoPlayerControllerNotifier _videoController;
+  VideoPlayerControllerNotifier? _videoController;
 
   @override
   void initState() {
     super.initState();
-    _videoController = ref.read(videoPlayerControllerProvider.notifier);
     PerformanceService.initialize();
     PerformanceService.optimizeForVideoPlayback();
-    _initializeVideo();
-
+    
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final videoState = ref.read(videoPlayerControllerProvider);
-      _applyOrientation(videoState.orientation);
+      if (mounted) {
+        _videoController = ref.read(videoPlayerControllerProvider.notifier);
+        if (widget.onBackPressed != null) {
+          ref.read(videoPlayerBackCallbackProvider.notifier).state = widget.onBackPressed;
+        }
+        _initializeVideo();
+        
+        final videoState = ref.read(videoPlayerControllerProvider);
+        _applyOrientation(videoState.orientation);
+      }
     });
   }
 
   @override
   void dispose() {
-    _videoController.reset();
+    try {
+      ref.read(videoPlayerBackCallbackProvider.notifier).state = null;
+      _videoController?.reset();
+    } catch (e) {
+      debugPrint('Error in dispose: $e');
+    }
     _resetOrientation();
     PerformanceService.resetPerformanceSettings();
     super.dispose();
   }
 
-  void _initializeVideo() {
-    final videoState = ref.read(videoPlayerControllerProvider);
+  Future<void> _handleBack() async {
+    if (_videoController != null) {
+      await _videoController!.pause();
+      _videoController!.reset();
+    }
+    // Removed delay for instant navigation
+    if (mounted) {
+      if (widget.onBackPressed != null) {
+        widget.onBackPressed!();
+      } else if (Navigator.of(context).canPop()) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
 
-    if (!videoState.isInitialized &&
-        (widget.videoUrl != null || widget.videoPath != null) &&
-        videoState.player == null) {
-      _videoController.initializeVideo(widget.videoUrl, widget.videoPath);
+  void _initializeVideo() {
+    if (_videoController == null) {
+      debugPrint('Video controller not initialized yet');
+      return;
+    }
+    
+    try {
+      final videoState = ref.read(videoPlayerControllerProvider);
+
+      if (!videoState.isInitialized &&
+          (widget.videoUrl != null || widget.videoPath != null) &&
+          videoState.player == null) {
+        _videoController!.initializeVideo(widget.videoUrl, widget.videoPath);
+      }
+    } catch (e, stackTrace) {
+      debugPrint('Error in _initializeVideo: $e');
+      debugPrint('Stack trace: $stackTrace');
     }
   }
 
@@ -108,18 +146,35 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
       _applyOrientation(next);
     });
 
-    final videoState = ref.watch(videoPlayerControllerProvider);
-    final bool isLoading = !videoState.isInitialized || !videoState.isLoaded;
+    // Use select to only watch specific properties to avoid unnecessary rebuilds
+    final bool isInitialized = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isInitialized),
+    );
+    final bool isLoaded = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isLoaded),
+    );
+    final bool isLoading = !isInitialized || !isLoaded;
 
-    return VideoPlayerErrorHandler(
-      videoPath: widget.videoPath,
-      videoUrl: widget.videoUrl,
-      onRetry: () => _initializeVideo(),
-      child: Scaffold(
-        backgroundColor: Colors.black,
-        body: Stack(
+    // Use a separate ProviderScope or select for orientation to avoid full rebuilds
+    // Note: Orientation is handled by strict listener above, so we don't need to watch it here
+    // for building the widget tree structure unless it changes the valid layout.
+
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) async {
+        if (!didPop) {
+          await _handleBack();
+        }
+      },
+      child: VideoPlayerErrorHandler(
+        videoPath: widget.videoPath,
+        videoUrl: widget.videoUrl,
+        onRetry: () => _initializeVideo(),
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: Stack(
           children: [
-            if (videoState.isInitialized)
+            if (isInitialized)
               NextGestureDetector(
                 onSeek: (position) {
                   ref
@@ -169,6 +224,8 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
                               controls: NoVideoControls,
                               width: double.infinity,
                               height: double.infinity,
+                              fill: Colors.black,
+                              filterQuality: FilterQuality.high,
                             );
 
                             if (currentRatio > 0) {
@@ -239,6 +296,7 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
             if (isLoading) _buildLoadingIndicator(),
           ],
         ),
+      ),
       ),
     );
   }

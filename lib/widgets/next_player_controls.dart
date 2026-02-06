@@ -23,6 +23,8 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   late Animation<double> _fadeAnimation;
 
   Timer? _hideTimer;
+  bool _isSeeking = false;
+  Duration _seekPosition = Duration.zero;
 
   @override
   void initState() {
@@ -92,21 +94,20 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
 
   @override
   Widget build(BuildContext context) {
-    final videoState = ref.watch(videoPlayerControllerProvider);
+    final isLocked = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isLocked),
+    );
+    // Removed full state watch to prevent rebuilds on 4Hz position updates
+    // final videoState = ref.watch(videoPlayerControllerProvider);
     final videoController = ref.read(videoPlayerControllerProvider.notifier);
 
-    // Listen to playback state changes
     ref.listen(videoPlayerControllerProvider.select((s) => s.isPlaying), (
       _,
-      __,
+      playing,
     ) {
-      final currentState = ref.read(videoPlayerControllerProvider);
-      if (!currentState.isPlaying &&
-          _fadeController.status == AnimationStatus.dismissed) {
-        // Show controls when video is paused
+      if (!playing && _fadeController.status == AnimationStatus.dismissed) {
         _fadeController.forward();
-      } else if (currentState.isPlaying) {
-        // Start hide timer when video starts playing
+      } else if (playing) {
         _startHideTimer();
       }
     });
@@ -121,22 +122,22 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
           child: Stack(
             children: [
               Container(color: Colors.black26),
-              if (!videoState.isLocked)
-                _buildTopControls(videoState, videoController),
-              _buildBottomControls(videoState, videoController),
-              if (videoState.isLocked)
+              if (!isLocked)
+                _buildTopControls(videoController),
+              _buildBottomControls(videoController),
+              if (isLocked)
                 Center(
                   child: IconButton(
                     icon: const Icon(Icons.lock, color: Colors.white, size: 64),
                     onPressed: () => videoController.toggleLock(),
                   ),
                 ),
-              if (_showSidePanel && !videoState.isLocked)
+              if (_showSidePanel && !isLocked)
                 Positioned(
                   top: 0,
                   bottom: 0,
                   right: 0,
-                  child: _buildSidePanel(videoState, videoController),
+                  child: _buildSidePanel(videoController),
                 ),
             ],
           ),
@@ -146,9 +147,13 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   Widget _buildTopControls(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
+    // Select only what we need for the top bar
+    final videoName = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.videoPath?.split(Platform.pathSeparator).last ?? 'Parthi Play'),
+    );
+
     return Positioned(
       top: 0,
       left: 0,
@@ -165,22 +170,95 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                IconButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.arrow_back, color: Colors.white),
-                ),
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () async {
+                      // Use the provided back callback if available (handles overlay mode)
+                      final backCallback = ref.read(videoPlayerBackCallbackProvider);
+                      
+                      await videoController.pause();
+                      videoController.reset();
+                      
+                      // Instant navigation - removed delay
+                      if (backCallback != null) {
+                        backCallback();
+                      } else if (context.mounted) {
+                        // Fallback to navigator pop
+                        if (Navigator.of(context).canPop()) {
+                          Navigator.of(context).pop();
+                        } else {
+                          final navigator = Navigator.of(context, rootNavigator: false);
+                          if (navigator.canPop()) {
+                            navigator.pop();
+                          } else {
+                            final rootNavigator = Navigator.of(context, rootNavigator: true);
+                            if (rootNavigator.canPop()) {
+                              rootNavigator.pop();
+                            }
+                          }
+                        }
+                      }
+                    },
+                    icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  ),
                 Expanded(
-                  child: Text(
-                    videoState.videoPath?.split(Platform.pathSeparator).last ??
-                        'Video Player',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                    overflow: TextOverflow.ellipsis,
+                  child: Row(
+                    children: [
+                      Flexible(
+                        child: Text(
+                          videoName,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Consumer(
+                        builder: (context, ref, _) {
+                          final useHwDec = ref.watch(
+                            videoPlayerControllerProvider.select((s) => s.useHwDec),
+                          );
+                          return Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              onTap: () {
+                                _startHideTimer();
+                                videoController.toggleDecoder();
+                              },
+                              borderRadius: BorderRadius.circular(4),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 6,
+                                  vertical: 2,
+                                ),
+                                decoration: BoxDecoration(
+                                  border: Border.all(
+                                    color: useHwDec ? Colors.blue : Colors.grey,
+                                    width: 1.5,
+                                  ),
+                                  borderRadius: BorderRadius.circular(4),
+                                  color: useHwDec 
+                                      ? Colors.blue.withValues(alpha: 0.2) 
+                                      : Colors.grey.withValues(alpha: 0.2),
+                                ),
+                                child: Text(
+                                  useHwDec ? 'HW' : 'SW',
+                                  style: TextStyle(
+                                    color: useHwDec ? Colors.blue : Colors.grey,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
                   ),
                 ),
                 IconButton(
@@ -192,7 +270,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
             const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerLeft,
-              child: _buildActionRibbon(videoState, videoController),
+              child: _buildActionRibbon(videoController),
             ),
           ],
         ),
@@ -201,11 +279,14 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   Widget _buildActionRibbon(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
+    
+    final orientation = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.orientation),
+    );
 
     final List<Widget> allActions = [
       _buildActionButton(Icons.cast, () => _showCastingControls()),
@@ -220,9 +301,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
       ),
       _buildActionButton(Icons.equalizer, () => _showEqualizer()),
       _buildActionButton(
-        _getRotationIcon(videoState.orientation),
+        _getRotationIcon(orientation),
         () => _showRotationControls(videoController),
-        color: _getRotationColor(videoState.orientation),
+        color: _getRotationColor(orientation),
       ),
       _buildActionButton(Icons.content_cut, () => _showVideoCutter()),
       _buildActionButton(
@@ -309,9 +390,18 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   Widget _buildBottomControls(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
+    final isLocked = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isLocked),
+    );
+    final position = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.position),
+    );
+    final duration = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.duration),
+    );
+
     return Positioned(
       bottom: 0,
       left: 0,
@@ -331,11 +421,11 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (!videoState.isLocked) ...[
+                if (!isLocked) ...[
                   Row(
                     children: [
                       Text(
-                        _formatDuration(videoState.position),
+                        _formatDuration(position),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -344,34 +434,44 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                       Expanded(
                         child: SliderTheme(
                           data: SliderTheme.of(context).copyWith(
-                            trackHeight: 2,
+                            trackHeight: 3,
                             thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 6,
+                              enabledThumbRadius: 8,
                             ),
-                            activeTrackColor: Colors.red,
-                            inactiveTrackColor: Colors.white24,
-                            thumbColor: Colors.red,
+                            activeTrackColor: Colors.red.shade600,
+                            inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
+                            thumbColor: Colors.red.shade600,
+                            overlayShape: const RoundSliderOverlayShape(
+                              overlayRadius: 16,
+                            ),
                           ),
                           child: Slider(
                             min: 0.0,
-                            max: videoState.duration.inMilliseconds.toDouble(),
-                            value: videoState.position.inMilliseconds
+                            max: duration.inMilliseconds.toDouble(),
+                            value: position.inMilliseconds
                                 .toDouble()
                                 .clamp(
                                   0.0,
-                                  videoState.duration.inMilliseconds.toDouble(),
+                                  duration.inMilliseconds.toDouble(),
                                 ),
+                            onChangeStart: (_) {
+                              _isSeeking = true;
+                            },
+                            onChangeEnd: (_) {
+                              _isSeeking = false;
+                            },
                             onChanged: (value) {
-                              _startHideTimer();
-                              videoController.seekTo(
-                                Duration(milliseconds: value.round()),
-                              );
+                              if (!_isSeeking) {
+                                _startHideTimer();
+                              }
+                              _seekPosition = Duration(milliseconds: value.round());
+                              videoController.seekTo(_seekPosition);
                             },
                           ),
                         ),
                       ),
                       Text(
-                        _formatDuration(videoState.duration),
+                        _formatDuration(duration),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -384,8 +484,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        _buildLockButton(videoState, videoController),
-                        // Wrap with Expanded/Flexible to prevent overflow
+                        _buildLockButton(videoController),
                         Expanded(
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
@@ -402,7 +501,6 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                               ),
                               const SizedBox(width: 20),
                               _buildPlayPauseButton(
-                                videoState,
                                 videoController,
                               ),
                               const SizedBox(width: 20),
@@ -419,13 +517,13 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                             ],
                           ),
                         ),
-                        _buildAspectRatioButton(videoState, videoController),
+                        _buildAspectRatioButton(videoController),
                       ],
                     ),
                   ),
                   const SizedBox(height: 12),
                 ] else ...[
-                  Center(child: _buildLockButton(videoState, videoController)),
+                  Center(child: _buildLockButton(videoController)),
                   const SizedBox(height: 16),
                 ],
               ],
@@ -467,50 +565,93 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   Widget _buildPlayPauseButton(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
+    final isPlaying = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isPlaying),
+    );
     return GestureDetector(
       onTap: () {
         _startHideTimer();
         videoController.togglePlayPause();
       },
-      child: Container(
-        padding: const EdgeInsets.all(8),
-        decoration: const BoxDecoration(
-          color: Colors.white,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white,
+              Colors.grey[100]!,
+            ],
+          ),
           shape: BoxShape.circle,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.3),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
         ),
-        child: Icon(
-          videoState.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-          color: Colors.black,
-          size: 24,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          child: Icon(
+            isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            key: ValueKey(isPlaying),
+            color: Colors.black87,
+            size: 28,
+          ),
         ),
       ),
     );
   }
 
   Widget _buildLockButton(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
-    return Material(
-      color: videoState.isLocked
-          ? Colors.red.withValues(alpha: 0.6)
-          : Colors.white12,
-      shape: const CircleBorder(),
-      child: InkWell(
-        onTap: () {
-          _startHideTimer();
-          videoController.toggleLock();
-        },
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Icon(
-            videoState.isLocked ? Icons.lock : Icons.lock_open,
-            color: Colors.white,
-            size: 20,
+    final isLocked = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isLocked),
+    );
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        color: isLocked
+            ? Colors.red.withValues(alpha: 0.8)
+            : Colors.white.withValues(alpha: 0.15),
+        shape: BoxShape.circle,
+        boxShadow: isLocked
+            ? [
+                BoxShadow(
+                  color: Colors.red.withValues(alpha: 0.5),
+                  blurRadius: 8,
+                  offset: const Offset(0, 2),
+                ),
+              ]
+            : null,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: () {
+            _startHideTimer();
+            videoController.toggleLock();
+          },
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              child: Icon(
+                isLocked ? Icons.lock : Icons.lock_open,
+                key: ValueKey(isLocked),
+                color: Colors.white,
+                size: 22,
+              ),
+            ),
           ),
         ),
       ),
@@ -518,24 +659,33 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   Widget _buildAspectRatioButton(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
-    return Material(
-      color: Colors.white12,
-      shape: const CircleBorder(),
-      child: InkWell(
-        onTap: () {
-          _startHideTimer();
-          videoController.cycleAspectRatio();
-        },
-        customBorder: const CircleBorder(),
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Icon(
-            _getAspectRatioIcon(videoState.aspectRatioMode),
-            color: Colors.white,
-            size: 20,
+    final aspectRatioMode = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.aspectRatioMode),
+    );
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.15),
+        shape: BoxShape.circle,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        shape: const CircleBorder(),
+        child: InkWell(
+          onTap: () {
+            _startHideTimer();
+            videoController.cycleAspectRatio();
+          },
+          customBorder: const CircleBorder(),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              _getAspectRatioIcon(aspectRatioMode),
+              color: Colors.white,
+              size: 22,
+            ),
           ),
         ),
       ),
@@ -564,7 +714,6 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   Widget _buildSidePanel(
-    VideoPlayerState videoState,
     VideoPlayerControllerNotifier videoController,
   ) {
     return Container(
@@ -672,44 +821,87 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
       constraints: BoxConstraints(
         maxHeight: MediaQuery.of(context).size.height * 0.7,
       ),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Audio Track',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Expanded(
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  ListTile(
-                    title: const Text(
-                      'Default Track',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                    subtitle: const Text(
-                      'System default audio track',
-                      style: TextStyle(color: Color(0xFFBDBDBD)),
-                    ),
-                    leading: const Icon(Icons.audiotrack, color: Colors.white),
-                    onTap: () {
-                      videoController.setAudioTrack(null);
-                      Navigator.pop(context);
-                    },
+      builder: (context) => Consumer(
+        builder: (context, ref, child) {
+          final currentState = ref.watch(videoPlayerControllerProvider);
+          return Container(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Audio Track',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
                   ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 16),
+                Expanded(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      ListTile(
+                        title: const Text(
+                          'Default Track',
+                          style: TextStyle(color: Colors.white),
+                        ),
+                        subtitle: const Text(
+                          'System default audio track',
+                          style: TextStyle(color: Color(0xFFBDBDBD)),
+                        ),
+                        leading: const Icon(Icons.audiotrack, color: Colors.white),
+                        trailing: currentState.audioTrackIndex < 0
+                            ? const Icon(Icons.check, color: Colors.red)
+                            : null,
+                        onTap: () {
+                          videoController.setAudioTrack(null);
+                          Navigator.pop(context);
+                        },
+                      ),
+                      if (currentState.audioTracks.isNotEmpty)
+                        ...currentState.audioTracks.asMap().entries.map((entry) {
+                          final index = entry.key;
+                          final track = entry.value;
+                          return ListTile(
+                            title: Text(
+                              track.displayName,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            subtitle: Text(
+                              '${track.language}${track.codec != null ? ' • ${track.codec}' : ''}${track.channels != null ? ' • ${track.channels}ch' : ''}',
+                              style: const TextStyle(color: Color(0xFFBDBDBD)),
+                            ),
+                            leading: const Icon(
+                              Icons.audiotrack,
+                              color: Colors.white,
+                            ),
+                            trailing: currentState.audioTrackIndex == index
+                                ? const Icon(Icons.check, color: Colors.red)
+                                : null,
+                            onTap: () {
+                              videoController.setAudioTrack(index);
+                              Navigator.pop(context);
+                            },
+                          );
+                        }),
+                      if (currentState.audioTracks.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(16.0),
+                          child: Text(
+                            'No audio tracks available',
+                            style: TextStyle(color: Color(0xFFBDBDBD)),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -727,7 +919,71 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     videoController.enterPIP();
   }
 
-  void _showAdvancedSettings(VideoPlayerControllerNotifier videoController) {}
+  void _showAdvancedSettings(VideoPlayerControllerNotifier videoController) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) => Consumer(
+        builder: (context, ref, child) {
+          final settings = ref.watch(videoPlayerControllerProvider);
+          
+          return Container(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Settings',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Hardware Decoding (HW)', style: TextStyle(color: Colors.white)),
+                  subtitle: Text(
+                    settings.useHwDec ? 'Using Hardware Decoder' : 'Using Software Decoder (SW)',
+                    style: TextStyle(color: Colors.grey[400]),
+                  ),
+                  value: settings.useHwDec,
+                  onChanged: (value) {
+                    videoController.toggleDecoder();
+                    // Close menu to restart player
+                    Navigator.pop(context);
+                  },
+                  activeColor: Colors.red,
+                ),
+                const Divider(color: Colors.white24),
+                ListTile(
+                  title: const Text('Volume Boost', style: TextStyle(color: Colors.white)),
+                  subtitle: Text(
+                    'Current: ${(settings.volumeBoost * 100).toInt()}%',
+                    style: TextStyle(color: Colors.grey[400]),
+                  ),
+                  trailing: SizedBox(
+                    width: 120,
+                    child: Slider(
+                      value: settings.volumeBoost,
+                      min: 1.0,
+                      max: 2.0,
+                      activeColor: Colors.red,
+                      onChanged: (value) => videoController.setVolumeBoost(value),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   void _showMoreOptions(VideoPlayerControllerNotifier videoController) {
     showModalBottomSheet(

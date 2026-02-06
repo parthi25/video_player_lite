@@ -97,7 +97,7 @@ class _LaunchScreenState extends State<LaunchScreen>
 
                     // App Name
                     const Text(
-                      'NEXT-GEN',
+                      'PARTHI',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 28,
@@ -109,7 +109,7 @@ class _LaunchScreenState extends State<LaunchScreen>
                     const SizedBox(height: 8),
 
                     const Text(
-                      'VIDEO PLAYER',
+                      'PLAY',
                       style: TextStyle(
                         color: Colors.red,
                         fontSize: 24,

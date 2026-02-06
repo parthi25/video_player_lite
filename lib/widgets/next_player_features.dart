@@ -76,7 +76,9 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
                 _buildSettingTile(
                   icon: Icons.audiotrack,
                   title: 'Audio Track',
-                  subtitle: 'Track ${videoState.audioTrackIndex + 1}',
+                  subtitle: videoState.audioTrackIndex >= 0 && videoState.audioTracks.isNotEmpty
+                      ? videoState.audioTracks[videoState.audioTrackIndex].displayName
+                      : 'Default',
                   onTap: () => _showAudioTrackSelection(videoController),
                 ),
 
