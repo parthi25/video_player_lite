@@ -1,16 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+
 import 'dart:io';
 
 import '../widgets/next_video_player.dart';
-import '../widgets/audio_player_widget.dart';
 import '../services/memory_monitor_service.dart';
 import '../services/video_scanner_service.dart';
 import '../services/playlist_service.dart';
-import '../services/video_format_service.dart';
 import '../services/file_browser_service.dart';
 import '../services/theme_service.dart';
+import '../core/video_player_controller.dart';
 import 'settings_screen.dart';
 
 class NextPlayerMainScreen extends ConsumerStatefulWidget {
@@ -31,6 +31,8 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
   List<VideoFile> _filteredVideos = [];
   String? _currentFilter;
   String? _currentFolderName;
+  final Map<String, List<VideoFile>> _foldersMap = {};
+  final List<String> _folderNames = [];
 
   @override
   void initState() {
@@ -74,6 +76,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       if (mounted) {
         setState(() {
           _localVideos = videos;
+          _organizeVideosByFolders();
           _applyFilter();
         });
 
@@ -94,22 +97,48 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     }
   }
 
-  void _playVideo(String videoPath, {bool isAudio = false}) {
-    if (isAudio) {
-      final fileName = videoPath.split(Platform.pathSeparator).last;
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) =>
-              AudioPlayerWidget(audioPath: videoPath, audioTitle: fileName),
-        ),
+  void _playVideo(String videoPath) {
+    // Set current folder in video controller for navigation
+    if (_currentFolderName != null &&
+        _foldersMap.containsKey(_currentFolderName)) {
+      final videoController = ref.read(videoPlayerControllerProvider.notifier);
+      videoController.setCurrentFolder(
+        _foldersMap[_currentFolderName]!,
+        _currentFolderName!,
       );
-    } else {
-      setState(() {
-        _videoPath = videoPath;
-        _videoUrl = null;
-      });
     }
+
+    setState(() {
+      _videoPath = videoPath;
+      _videoUrl = null;
+    });
+  }
+
+  void _organizeVideosByFolders() {
+    _foldersMap.clear();
+    _folderNames.clear();
+
+    for (final video in _localVideos) {
+      final folderPath = video.path.contains(Platform.pathSeparator)
+          ? video.path.substring(
+              0,
+              video.path.lastIndexOf(Platform.pathSeparator),
+            )
+          : 'Root';
+      final folderName = folderPath.contains(Platform.pathSeparator)
+          ? folderPath.substring(
+              folderPath.lastIndexOf(Platform.pathSeparator) + 1,
+            )
+          : folderPath;
+
+      if (!_foldersMap.containsKey(folderName)) {
+        _foldersMap[folderName] = [];
+        _folderNames.add(folderName);
+      }
+      _foldersMap[folderName]!.add(video);
+    }
+
+    _folderNames.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
   }
 
   void _onVideoEnded() {
@@ -122,23 +151,33 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
 
   void _applyFilter() {
     setState(() {
-      if (_currentFilter == null && _currentFolderName == null) {
-        _filteredVideos = _localVideos;
+      if (_currentFilter == 'folders') {
+        // Show folders list
+        _filteredVideos = [];
+      } else if (_currentFolderName != null) {
+        // Show videos from selected folder
+        _filteredVideos = _foldersMap[_currentFolderName] ?? [];
+      } else if (_currentFilter == null && _currentFolderName == null) {
+        // Only show video files
+        _filteredVideos = _localVideos
+            .where((v) => v.type == MediaType.video)
+            .toList();
       } else if (_currentFilter != null) {
-        if (_currentFilter == 'music') {
-          _filteredVideos = _localVideos.where((v) => v.isAudio).toList();
-          debugPrint(
-            'Music filter: Found ${_filteredVideos.length} audio files out of ${_localVideos.length} total',
-          );
-        } else if (_currentFilter == 'videos') {
+        if (_currentFilter == 'videos') {
           _filteredVideos = _localVideos
               .where((v) => v.type == MediaType.video)
               .toList();
         } else {
-          _filteredVideos = _localVideos;
+          // Default to videos only for any other filter
+          _filteredVideos = _localVideos
+              .where((v) => v.type == MediaType.video)
+              .toList();
         }
       } else {
-        _filteredVideos = _localVideos;
+        // Default case - show videos only
+        _filteredVideos = _localVideos
+            .where((v) => v.type == MediaType.video)
+            .toList();
       }
     });
   }
@@ -196,45 +235,58 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(16.0),
-            child: Text(
-              'Sort By',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+      isScrollControlled: true,
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.6,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Text(
+                'Sort By',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
             ),
-          ),
-          ListTile(
-            leading: const Icon(Icons.sort_by_alpha),
-            title: const Text('Name'),
-            onTap: () {
-              _sortVideos((a, b) => a.name.compareTo(b.name));
-              Navigator.pop(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.date_range),
-            title: const Text('Date'),
-            onTap: () {
-              _sortVideos((a, b) => b.lastModified.compareTo(a.lastModified));
-              Navigator.pop(context);
-            },
-          ),
-          ListTile(
-            leading: const Icon(Icons.straighten),
-            title: const Text('Size'),
-            onTap: () {
-              _sortVideos((a, b) => b.size.compareTo(a.size));
-              Navigator.pop(context);
-            },
-          ),
-          const SizedBox(height: 16),
-        ],
+            Expanded(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.sort_by_alpha),
+                    title: const Text('Name'),
+                    onTap: () {
+                      _sortVideos((a, b) => a.name.compareTo(b.name));
+                      Navigator.pop(context);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.date_range),
+                    title: const Text('Date'),
+                    onTap: () {
+                      _sortVideos(
+                        (a, b) => b.lastModified.compareTo(a.lastModified),
+                      );
+                      Navigator.pop(context);
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.straighten),
+                    title: const Text('Size'),
+                    onTap: () {
+                      _sortVideos((a, b) => b.size.compareTo(a.size));
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }
@@ -255,6 +307,104 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
+  Widget _buildFolderListItem(String folderName, int videoCount) {
+    final theme = ref.watch(themeModeProvider);
+    final isDark = theme == ThemeMode.dark;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFF5F5F7),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () {
+            setState(() {
+              _currentFolderName = folderName;
+              _currentFilter = null;
+              _applyFilter();
+            });
+          },
+          borderRadius: BorderRadius.circular(16),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Container(
+                  width: 80,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [Colors.orange.shade700, Colors.orange.shade900],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.orange.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.folder_rounded,
+                    color: Colors.white,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        folderName,
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: isDark ? Colors.white : Colors.black,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Text(
+                              '$videoCount videos',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.orange.shade600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -349,11 +499,11 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                   isActive: _currentFilter == 'videos',
                 ),
                 _buildChip(
-                  'Music',
-                  Icons.music_note,
-                  Colors.indigo,
-                  () => _onChipTap('Music'),
-                  isActive: _currentFilter == 'music',
+                  'Folders',
+                  Icons.folder_outlined,
+                  Colors.orange,
+                  () => _onChipTap('Folders'),
+                  isActive: _currentFilter == 'folders',
                 ),
                 _buildChip(
                   'Streaming',
@@ -388,8 +538,64 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       ),
       body: RefreshIndicator(
         onRefresh: () => _scanVideos(background: false),
-        child: _buildFoldersList(),
+        child: _buildContent(),
       ),
+    );
+  }
+
+  Widget _buildContent() {
+    final theme = ref.watch(themeModeProvider);
+    final isDark = theme == ThemeMode.dark;
+
+    final bool isFiltering =
+        _currentFilter != null || _currentFolderName != null;
+    final List<VideoFile> displayVideos = isFiltering
+        ? _filteredVideos
+        : _localVideos;
+
+    // Show folders when folders filter is active
+    if (_currentFilter == 'folders') {
+      return _buildFoldersList();
+    }
+
+    if (displayVideos.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.movie_outlined,
+              size: 64,
+              color: isDark ? Colors.grey[600] : Colors.grey[400],
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No videos found',
+              style: TextStyle(
+                fontSize: 18,
+                color: isDark ? Colors.grey[400] : Colors.grey[600],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Try scanning for videos or check your storage permissions',
+              style: TextStyle(
+                fontSize: 14,
+                color: isDark ? Colors.grey[500] : Colors.grey[500],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: displayVideos.length,
+      itemBuilder: (context, index) {
+        final video = displayVideos[index];
+        return _buildVideoListItem(video);
+      },
     );
   }
 
@@ -423,65 +629,35 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
   }
 
   Widget _buildFoldersList() {
-    final folderMap = <String, List<VideoFile>>{};
-    for (var v in _localVideos) {
-      try {
-        final parentPath = Directory(v.path).parent.path;
-        if (parentPath == '.' || parentPath == '/' || parentPath.isEmpty) {
-          continue;
-        }
+    final theme = ref.watch(themeModeProvider);
+    final isDark = theme == ThemeMode.dark;
 
-        final parentName = parentPath.split(Platform.pathSeparator).last;
-        if (parentName.isEmpty) continue;
-
-        folderMap.putIfAbsent(parentName, () => []).add(v);
-      } catch (e) {
-        // Skip invalid paths
-      }
-    }
-
-    final bool isFiltering =
-        _currentFilter != null || _currentFolderName != null;
-    final List<VideoFile> displayVideos = isFiltering
-        ? _filteredVideos
-        : _localVideos;
-
-    if (displayVideos.isEmpty) {
+    if (_folderNames.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              isFiltering ? Icons.filter_list : Icons.folder_open,
+              Icons.folder_outlined,
               size: 64,
-              color: Colors.grey[400],
+              color: isDark ? Colors.grey[600] : Colors.grey[400],
             ),
             const SizedBox(height: 16),
             Text(
-              isFiltering ? 'No files found' : 'No videos found',
+              'No folders found',
               style: TextStyle(
                 fontSize: 18,
-                color: Colors.grey[600],
-                fontWeight: FontWeight.w500,
+                color: isDark ? Colors.grey[400] : Colors.grey[600],
               ),
             ),
             const SizedBox(height: 8),
-            if (isFiltering)
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _currentFilter = null;
-                    _currentFolderName = null;
-                    _applyFilter();
-                  });
-                },
-                child: const Text('Clear Filter'),
-              )
-            else
-              TextButton(
-                onPressed: () => _scanVideos(background: false),
-                child: const Text('Scan for Videos'),
+            Text(
+              'Scan for videos to see folders',
+              style: TextStyle(
+                fontSize: 14,
+                color: isDark ? Colors.grey[500] : Colors.grey[500],
               ),
+            ),
           ],
         ),
       );
@@ -489,10 +665,11 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
 
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: displayVideos.length,
+      itemCount: _folderNames.length,
       itemBuilder: (context, index) {
-        final video = displayVideos[index];
-        return _buildVideoListItem(video);
+        final folderName = _folderNames[index];
+        final videoCount = _foldersMap[folderName]?.length ?? 0;
+        return _buildFolderListItem(folderName, videoCount);
       },
     );
   }
@@ -510,7 +687,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _playVideo(video.path, isAudio: video.isAudio),
+          onTap: () => _playVideo(video.path),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -630,7 +807,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                   onSelected: (value) {
                     switch (value) {
                       case 'play':
-                        _playVideo(video.path, isAudio: video.isAudio);
+                        _playVideo(video.path);
                         break;
                       case 'info':
                         _showVideoInfo(video);
@@ -686,20 +863,23 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       context: context,
       builder: (context) => AlertDialog(
         title: Text(video.name),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Path: ${video.path}'),
-            const SizedBox(height: 8),
-            Text('Size: ${video.formattedSize}'),
-            const SizedBox(height: 8),
-            Text('Type: ${video.type.name}'),
-            const SizedBox(height: 8),
-            Text('Format: ${video.format}'),
-            const SizedBox(height: 8),
-            Text('Modified: ${video.lastModified}'),
-          ],
+        content: SizedBox(
+          width: MediaQuery.of(context).size.width * 0.8,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Path: ${video.path}'),
+              const SizedBox(height: 8),
+              Text('Size: ${video.formattedSize}'),
+              const SizedBox(height: 8),
+              Text('Type: ${video.type.name}'),
+              const SizedBox(height: 8),
+              Text('Format: ${video.format}'),
+              const SizedBox(height: 8),
+              Text('Modified: ${video.lastModified}'),
+            ],
+          ),
         ),
         actions: [
           TextButton(

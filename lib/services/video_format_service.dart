@@ -1,3 +1,5 @@
+import '../core/video_player_controller.dart';
+
 class VideoFormat {
   final String extension;
   final String name;
@@ -17,8 +19,6 @@ class VideoFormat {
     this.notes,
   });
 }
-
-enum MediaType { video, audio, streaming }
 
 class VideoFormatService {
   static const List<VideoFormat> supportedFormats = [

@@ -8,7 +8,50 @@ import 'package:floating/floating.dart';
 
 import '../widgets/subtitle_display_widget.dart';
 import '../services/system_controls_service.dart';
+import '../services/file_browser_service.dart';
 import '../services/video_format_service.dart';
+
+enum MediaType { video, audio, streaming, image }
+
+class AudioTrackInfo {
+  final int id;
+  final String title;
+  final String language;
+  final String? codec;
+  final int? channels;
+  final int? bitrate;
+
+  const AudioTrackInfo({
+    required this.id,
+    required this.title,
+    required this.language,
+    this.codec,
+    this.channels,
+    this.bitrate,
+  });
+
+  String get displayName {
+    if (title.isNotEmpty) return title;
+
+    // Build descriptive name with codec and language
+    final parts = <String>[];
+    if (codec != null && codec!.isNotEmpty) {
+      parts.add(codec!.toUpperCase());
+    }
+    if (language.isNotEmpty && language != 'Unknown') {
+      parts.add(language.toUpperCase());
+    }
+    if (parts.isNotEmpty) {
+      return parts.join(' • ');
+    }
+
+    // Fallback to track number with language if available
+    if (language.isNotEmpty && language != 'Unknown') {
+      return 'Track $id ($language)';
+    }
+    return 'Track $id';
+  }
+}
 
 enum PlayerOrientation { auto, landscape, portrait }
 
@@ -56,6 +99,11 @@ class VideoPlayerState {
   final double audioDelay; // In milliseconds
   final double volumeBoost; // 1.0 is normal, 2.0 is double
   final MediaType type;
+  final List<VideoFile> currentFolderVideos;
+  final String? currentFolderName;
+  final List<double> equalizerBands;
+  final bool isEqualizerEnabled;
+  final List<AudioTrackInfo> audioTracks;
 
   const VideoPlayerState({
     this.player,
@@ -65,7 +113,7 @@ class VideoPlayerState {
     this.position = Duration.zero,
     this.duration = Duration.zero,
     this.bufferDuration = Duration.zero,
-    this.volume = 100.0, // MediaKit uses 0-100
+    this.volume = 100.0,
     this.isLocked = false,
     this.subtitlePath,
     this.subtitles = const [],
@@ -76,7 +124,7 @@ class VideoPlayerState {
     this.errorMessage,
     this.playbackSpeed = 1.0,
     this.aspectRatioMode = AspectRatioMode.fit,
-    this.aspectRatio = 1.777, // Default 16:9
+    this.aspectRatio = 1.777,
     this.videoPath,
     this.videoUrl,
     this.isLoaded = false,
@@ -86,6 +134,11 @@ class VideoPlayerState {
     this.audioDelay = 0.0,
     this.volumeBoost = 1.0,
     this.type = MediaType.video,
+    this.currentFolderVideos = const [],
+    this.currentFolderName,
+    this.equalizerBands = const [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    this.isEqualizerEnabled = false,
+    this.audioTracks = const [],
   });
 
   VideoPlayerState copyWith({
@@ -117,6 +170,11 @@ class VideoPlayerState {
     double? audioDelay,
     double? volumeBoost,
     MediaType? type,
+    List<VideoFile>? currentFolderVideos,
+    String? currentFolderName,
+    List<double>? equalizerBands,
+    bool? isEqualizerEnabled,
+    List<AudioTrackInfo>? audioTracks,
   }) {
     return VideoPlayerState(
       player: player ?? this.player,
@@ -147,22 +205,24 @@ class VideoPlayerState {
       audioDelay: audioDelay ?? this.audioDelay,
       volumeBoost: volumeBoost ?? this.volumeBoost,
       type: type ?? this.type,
+      currentFolderVideos: currentFolderVideos ?? this.currentFolderVideos,
+      currentFolderName: currentFolderName ?? this.currentFolderName,
+      equalizerBands: equalizerBands ?? this.equalizerBands,
+      isEqualizerEnabled: isEqualizerEnabled ?? this.isEqualizerEnabled,
+      audioTracks: audioTracks ?? this.audioTracks,
     );
   }
 }
 
-// Video player controller using Riverpod
 class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
   final Floating _floating = Floating();
+  final List<StreamSubscription> _subscriptions = [];
+
   VideoPlayerControllerNotifier() : super(const VideoPlayerState()) {
     _initPipListener();
   }
 
-  void _initPipListener() {
-    // PiP status stream not available in floating 2.0.x
-  }
-
-  final List<StreamSubscription> _subscriptions = [];
+  void _initPipListener() {}
 
   Future<void> _disposePlayer() async {
     for (final s in _subscriptions) {
@@ -206,7 +266,6 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       final player = Player();
 
-      // Set hardware decoding with error handling
       try {
         if (state.useHwDec) {
           if (player.platform is NativePlayer) {
@@ -219,110 +278,132 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         }
       } catch (e) {
         debugPrint('Hardware decoding setup error: $e');
-        // Continue without hardware decoding if setup fails
       }
 
       final videoController = VideoController(player);
 
-      // Add stream subscriptions with error handling
-      try {
-        _subscriptions.add(
-          player.stream.position.listen(
-            (position) {
-              if (mounted) {
-                state = state.copyWith(position: position);
-              }
-            },
-            onError: (error) {
-              debugPrint('Position stream error: $error');
-            },
-          ),
-        );
-
-        _subscriptions.add(
-          player.stream.duration.listen(
-            (duration) {
-              if (mounted) {
-                state = state.copyWith(duration: duration);
-              }
-            },
-            onError: (error) {
-              debugPrint('Duration stream error: $error');
-            },
-          ),
-        );
-
-        _subscriptions.add(
-          player.stream.buffer.listen(
-            (buffer) {
-              if (mounted) {
-                state = state.copyWith(bufferDuration: buffer);
-              }
-            },
-            onError: (error) {
-              debugPrint('Buffer stream error: $error');
-            },
-          ),
-        );
-
-        _subscriptions.add(
-          player.stream.playing.listen(
-            (isPlaying) {
-              if (mounted) {
-                state = state.copyWith(isPlaying: isPlaying);
-              }
-            },
-            onError: (error) {
-              debugPrint('Playing stream error: $error');
-            },
-          ),
-        );
-
-        _subscriptions.add(
-          player.stream.volume.listen(
-            (volume) {
-              if (mounted) {
-                state = state.copyWith(volume: volume);
-              }
-            },
-            onError: (error) {
-              debugPrint('Volume stream error: $error');
-            },
-          ),
-        );
-
-        _subscriptions.add(
-          player.stream.error.listen((error) {
-            debugPrint('MediaKit Error: $error');
-            if (mounted) {
-              state = state.copyWith(
-                hasError: true,
-                errorMessage: 'Playback error: $error',
-                isPlaying: false,
-              );
-            }
-          }),
-        );
-      } catch (e) {
-        debugPrint('Stream subscription error: $e');
-      }
+      _subscriptions.add(
+        player.stream.position.listen(
+          (p) => state = state.copyWith(position: p),
+        ),
+      );
+      _subscriptions.add(
+        player.stream.duration.listen(
+          (d) => state = state.copyWith(duration: d),
+        ),
+      );
+      _subscriptions.add(
+        player.stream.buffer.listen(
+          (b) => state = state.copyWith(bufferDuration: b),
+        ),
+      );
+      _subscriptions.add(
+        player.stream.playing.listen(
+          (isPlaying) => state = state.copyWith(isPlaying: isPlaying),
+        ),
+      );
+      _subscriptions.add(
+        player.stream.volume.listen((v) => state = state.copyWith(volume: v)),
+      );
+      _subscriptions.add(
+        player.stream.error.listen((e) {
+          state = state.copyWith(
+            hasError: true,
+            errorMessage: 'Playback error: $e',
+            isPlaying: false,
+          );
+        }),
+      );
 
       Media? media;
+      if (videoUrl != null && videoUrl.isNotEmpty) {
+        media = Media(videoUrl);
+      } else if (videoPath != null && videoPath.isNotEmpty) {
+        media = Media(videoPath);
+      }
+
+      if (media == null) throw Exception('No valid media source');
+
+      await player.open(media, play: false);
+
+      // Extract audio tracks information with multiple attempts
+      final audioTracks = <AudioTrackInfo>[];
       try {
-        if (videoUrl != null && videoUrl.isNotEmpty) {
-          media = Media(videoUrl);
-        } else if (videoPath != null && videoPath.isNotEmpty) {
-          media = Media(videoPath);
+        // Wait longer for tracks to be loaded, especially for HEVC content
+        await Future.delayed(const Duration(milliseconds: 1000));
+
+        // Try multiple times to get tracks
+        for (int attempt = 0; attempt < 3; attempt++) {
+          await Future.delayed(Duration(milliseconds: 500 * (attempt + 1)));
+          final tracks = player.state.tracks.audio;
+
+          if (tracks.isNotEmpty) {
+            for (int i = 0; i < tracks.length; i++) {
+              final track = tracks[i];
+              // Extract detailed codec information
+              String? codecInfo = track.codec;
+              String? titleInfo = track.title;
+
+              // Try to get more detailed codec info
+              if (codecInfo == null || codecInfo.isEmpty) {
+                // Fallback to common codec names based on track properties
+                if (track.channels != null) {
+                  final channels = track.channels.toString();
+                  if (channels.contains('2')) {
+                    codecInfo = 'STEREO';
+                  } else if (channels.contains('6')) {
+                    codecInfo = '5.1';
+                  } else if (channels.contains('8')) {
+                    codecInfo = '7.1';
+                  }
+                }
+              }
+
+              audioTracks.add(
+                AudioTrackInfo(
+                  id: i,
+                  title: titleInfo?.isNotEmpty == true
+                      ? titleInfo!
+                      : (codecInfo?.isNotEmpty == true
+                            ? 'Audio $codecInfo'
+                            : 'Track ${i + 1}'),
+                  language: track.language ?? 'Unknown',
+                  codec: codecInfo,
+                  channels: track.channels != null
+                      ? int.tryParse(track.channels.toString())
+                      : null,
+                ),
+              );
+            }
+            break; // Success, exit retry loop
+          }
+        }
+
+        // If no tracks found, add a default audio track as fallback for better UX
+        if (audioTracks.isEmpty) {
+          audioTracks.add(
+            AudioTrackInfo(
+              id: 0,
+              title: 'Default Audio',
+              language: 'Unknown',
+              codec: null,
+              channels: null,
+            ),
+          );
         }
       } catch (e) {
-        debugPrint('Media creation error: $e');
+        debugPrint('Error extracting audio tracks: $e');
+        // Add a default audio track as fallback
+        audioTracks.add(
+          AudioTrackInfo(
+            id: 0,
+            title: 'Default Audio',
+            language: 'Unknown',
+            codec: null,
+            channels: null,
+          ),
+        );
       }
-
-      if (media == null) {
-        throw Exception('No valid media source provided');
-      }
-
-      await player.open(media, play: false); // Don't auto-play initially
 
       if (mounted) {
         state = state.copyWith(
@@ -330,47 +411,36 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
           videoController: videoController,
           isInitialized: true,
           isLoaded: true,
-          isPlaying: false, // Start paused
+          isPlaying: false,
           volume: 100.0,
+          audioTracks: audioTracks,
         );
       }
     } catch (e) {
-      debugPrint('Video initialization error: $e');
       await _disposePlayer();
       if (mounted) {
         state = state.copyWith(
           isInitialized: false,
           hasError: true,
-          errorMessage: 'Failed to initialize video: $e',
+          errorMessage: 'Failed: $e',
         );
       }
     }
   }
 
-  Future<void> play() async {
-    await state.player?.play();
-  }
-
-  Future<void> pause() async {
-    await state.player?.pause();
-  }
-
-  Future<void> togglePlayPause() async {
-    await state.player?.playOrPause();
-  }
-
-  Future<void> seekTo(Duration position) async {
-    await state.player?.seek(position);
-  }
+  Future<void> play() async => await state.player?.play();
+  Future<void> pause() async => await state.player?.pause();
+  Future<void> togglePlayPause() async => await state.player?.playOrPause();
+  Future<void> seekTo(Duration position) async =>
+      await state.player?.seek(position);
 
   Future<void> setVolume(double volume) async {
     final v = (volume * 100).clamp(0.0, 200.0);
     await state.player?.setVolume(v);
-
     try {
       await SystemControlsService.setVolume(volume.clamp(0.0, 1.0));
     } catch (e) {
-      debugPrint('Error syncing system volume: $e');
+      // Ignore system volume sync errors
     }
   }
 
@@ -379,54 +449,48 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     state = state.copyWith(playbackSpeed: speed);
   }
 
-  void toggleControls() {
-    state = state.copyWith(showControls: !state.showControls);
-  }
-
-  void toggleLock() {
-    state = state.copyWith(isLocked: !state.isLocked);
-  }
-
-  void toggleFullscreen() {
-    state = state.copyWith(isFullscreen: !state.isFullscreen);
-  }
+  void toggleControls() =>
+      state = state.copyWith(showControls: !state.showControls);
+  void toggleLock() => state = state.copyWith(isLocked: !state.isLocked);
+  void toggleFullscreen() =>
+      state = state.copyWith(isFullscreen: !state.isFullscreen);
 
   void setAspectRatio(AspectRatioMode mode) {
-    double ratioValue = 16.0 / 9.0;
+    double ratio = 16.0 / 9.0;
     switch (mode) {
       case AspectRatioMode.sixteenNine:
-        ratioValue = 16.0 / 9.0;
+        ratio = 16.0 / 9.0;
         break;
       case AspectRatioMode.fourThree:
-        ratioValue = 4.0 / 3.0;
+        ratio = 4.0 / 3.0;
         break;
       case AspectRatioMode.oneOne:
-        ratioValue = 1.0;
+        ratio = 1.0;
         break;
       case AspectRatioMode.twentyOneNine:
-        ratioValue = 21.0 / 9.0;
+        ratio = 21.0 / 9.0;
         break;
       case AspectRatioMode.fit:
-        ratioValue = -1.0;
+        ratio = -1.0;
         break;
       case AspectRatioMode.fill:
-        ratioValue = -2.0;
+        ratio = -2.0;
         break;
       case AspectRatioMode.stretch:
-        ratioValue = -3.0;
+        ratio = -3.0;
         break;
       case AspectRatioMode.auto:
-        ratioValue = 0.0;
+        ratio = 0.0;
         break;
     }
-    state = state.copyWith(aspectRatio: ratioValue, aspectRatioMode: mode);
+    state = state.copyWith(aspectRatio: ratio, aspectRatioMode: mode);
   }
 
   void cycleAspectRatio() {
     final modes = AspectRatioMode.values;
-    final currentIndex = modes.indexOf(state.aspectRatioMode);
-    final nextIndex = (currentIndex + 1) % modes.length;
-    setAspectRatio(modes[nextIndex]);
+    setAspectRatio(
+      modes[(modes.indexOf(state.aspectRatioMode) + 1) % modes.length],
+    );
   }
 
   void setAudioDelay(double delay) {
@@ -441,9 +505,7 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
   void setVolumeBoost(double boost) {
     state = state.copyWith(volumeBoost: boost);
-    if (state.player != null) {
-      state.player!.setVolume(state.volume * boost);
-    }
+    if (state.player != null) state.player!.setVolume(state.volume * boost);
   }
 
   Future<void> setAudioTrack(int? index) async {
@@ -456,28 +518,26 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     }
   }
 
-  void setSubtitle(String? path) {
-    state = state.copyWith(subtitlePath: path);
-  }
+  void setSubtitle(String? path) => state = state.copyWith(subtitlePath: path);
 
   Future<void> toggleRotation() async {
-    late PlayerOrientation newOrientation;
+    late PlayerOrientation newO;
     switch (state.orientation) {
       case PlayerOrientation.auto:
-        newOrientation = PlayerOrientation.landscape;
+        newO = PlayerOrientation.landscape;
         await SystemChrome.setPreferredOrientations([
           DeviceOrientation.landscapeLeft,
           DeviceOrientation.landscapeRight,
         ]);
         break;
       case PlayerOrientation.landscape:
-        newOrientation = PlayerOrientation.portrait;
+        newO = PlayerOrientation.portrait;
         await SystemChrome.setPreferredOrientations([
           DeviceOrientation.portraitUp,
         ]);
         break;
       case PlayerOrientation.portrait:
-        newOrientation = PlayerOrientation.auto;
+        newO = PlayerOrientation.auto;
         await SystemChrome.setPreferredOrientations([
           DeviceOrientation.portraitUp,
           DeviceOrientation.portraitDown,
@@ -486,42 +546,91 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         ]);
         break;
     }
-    state = state.copyWith(orientation: newOrientation);
+    state = state.copyWith(orientation: newO);
   }
 
   Future<void> enterPIP() async {
     try {
-      final canUsePip = await _floating.isPipAvailable;
-      if (canUsePip) {
-        final result = await _floating.enable(
-          ImmediatePiP(aspectRatio: const Rational.landscape()),
-        );
-        if (result == PiPStatus.enabled) {
+      if (await _floating.isPipAvailable) {
+        if (await _floating.enable(
+              ImmediatePiP(aspectRatio: const Rational.landscape()),
+            ) ==
+            PiPStatus.enabled) {
           state = state.copyWith(isInPip: true);
         }
       }
     } catch (e) {
-      debugPrint('Error enabling PIP: $e');
+      // Ignore PiP errors
     }
   }
 
   Future<void> takeScreenshot() async {
     if (state.player == null) return;
     try {
-      final image = await state.player!.screenshot();
-      if (image != null) {
-        debugPrint('Screenshot taken! Size: ${image.length} bytes');
-      }
+      await state.player!.screenshot();
     } catch (e) {
-      debugPrint('Error taking screenshot: $e');
+      // Ignore screenshot errors
     }
   }
 
   void toggleDecoder() {
-    final newValue = !state.useHwDec;
-    state = state.copyWith(useHwDec: newValue);
+    state = state.copyWith(useHwDec: !state.useHwDec);
     if (state.videoPath != null || state.videoUrl != null) {
       initializeVideo(state.videoUrl, state.videoPath);
+    }
+  }
+
+  void setCurrentFolder(List<VideoFile> folderVideos, String folderName) {
+    state = state.copyWith(
+      currentFolderVideos: folderVideos,
+      currentFolderName: folderName,
+    );
+  }
+
+  Future<void> playNextInFolder() async {
+    if (state.currentFolderVideos.isEmpty || state.videoPath == null) return;
+    final idx = state.currentFolderVideos.indexWhere(
+      (v) => v.path == state.videoPath,
+    );
+    if (idx != -1 && idx < state.currentFolderVideos.length - 1) {
+      await initializeVideo(null, state.currentFolderVideos[idx + 1].path);
+    }
+  }
+
+  Future<void> playPreviousInFolder() async {
+    if (state.currentFolderVideos.isEmpty || state.videoPath == null) return;
+    final idx = state.currentFolderVideos.indexWhere(
+      (v) => v.path == state.videoPath,
+    );
+    if (idx > 0) {
+      await initializeVideo(null, state.currentFolderVideos[idx - 1].path);
+    }
+  }
+
+  void toggleEqualizer() {
+    state = state.copyWith(isEqualizerEnabled: !state.isEqualizerEnabled);
+    _applyEqualizer();
+  }
+
+  void setEqualizerBand(int index, double value) {
+    final bands = List<double>.from(state.equalizerBands);
+    bands[index] = value;
+    state = state.copyWith(equalizerBands: bands);
+    if (state.isEqualizerEnabled) _applyEqualizer();
+  }
+
+  void _applyEqualizer() {
+    if (state.player?.platform is NativePlayer) {
+      if (!state.isEqualizerEnabled) {
+        (state.player!.platform as NativePlayer).setProperty('af', '');
+        return;
+      }
+      String filter = 'superequalizer=';
+      for (int i = 0; i < state.equalizerBands.length; i++) {
+        filter += '${i + 1}b=${state.equalizerBands[i].toStringAsFixed(1)}';
+        if (i < state.equalizerBands.length - 1) filter += ':';
+      }
+      (state.player!.platform as NativePlayer).setProperty('af', filter);
     }
   }
 
@@ -533,15 +642,13 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 }
 
 final videoPlayerControllerProvider =
-    StateNotifierProvider<VideoPlayerControllerNotifier, VideoPlayerState>((
-      ref,
-    ) {
-      return VideoPlayerControllerNotifier();
-    });
+    StateNotifierProvider<VideoPlayerControllerNotifier, VideoPlayerState>(
+      (ref) => VideoPlayerControllerNotifier(),
+    );
 
-final gestureStateProvider = StateProvider<GestureState>((ref) {
-  return const GestureState();
-});
+final gestureStateProvider = StateProvider<GestureState>(
+  (ref) => const GestureState(),
+);
 
 class GestureState {
   final bool isSeeking;

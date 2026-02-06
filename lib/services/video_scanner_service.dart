@@ -194,15 +194,12 @@ class VideoScannerService {
                 ? name.split('.').last.toLowerCase()
                 : '';
 
-            final allExtensions = [...videoExtensions, ...audioExtensions];
+            final allExtensions = videoExtensions; // Only scan for video files
             if (allExtensions.contains(extension)) {
-              // Filter small files (thumbnails/ads) - smaller for audio
+              // Filter small files (thumbnails/ads)
               try {
                 final stat = entity.statSync();
-                final minSize = audioExtensions.contains(extension)
-                    ? 100 *
-                          1024 // 100KB for audio
-                    : 1024 * 1024; // 1MB for video
+                final minSize = 1024 * 1024; // 1MB minimum for video files
 
                 if (stat.size > minSize) {
                   if (!processedPaths.contains(path)) {

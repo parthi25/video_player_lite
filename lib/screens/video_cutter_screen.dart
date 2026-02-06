@@ -148,102 +148,119 @@ class _VideoCutterScreenState extends State<VideoCutterScreen> {
         title: const Text('Video Cutter'),
         backgroundColor: Colors.transparent,
       ),
-      body: Column(
-        children: [
-          Expanded(
-            flex: 3,
-            child: Center(child: Video(controller: _controller)),
+      body: SingleChildScrollView(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            minHeight: MediaQuery.of(context).size.height,
           ),
-          Expanded(
-            flex: 2,
-            child: Container(
-              padding: const EdgeInsets.all(20),
-              decoration: const BoxDecoration(
-                color: Color(0xFF121212),
-                borderRadius: BorderRadius.only(
-                  topLeft: Radius.circular(30),
-                  topRight: Radius.circular(30),
+          child: IntrinsicHeight(
+            child: Column(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxHeight: MediaQuery.of(context).size.height * 0.5,
+                    ),
+                    child: Center(child: Video(controller: _controller)),
+                  ),
                 ),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        _formatDuration(
-                          Duration(milliseconds: _startValue.toInt()),
-                        ),
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                        ),
+                Expanded(
+                  flex: 2,
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: const BoxDecoration(
+                      color: Color(0xFF121212),
+                      borderRadius: BorderRadius.only(
+                        topLeft: Radius.circular(30),
+                        topRight: Radius.circular(30),
                       ),
-                      Text(
-                        _formatDuration(
-                          Duration(milliseconds: _endValue.toInt()),
-                        ),
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  RangeSlider(
-                    values: RangeValues(_startValue, _endValue),
-                    min: 0.0,
-                    max: _duration.inMilliseconds.toDouble() > 0
-                        ? _duration.inMilliseconds.toDouble()
-                        : 1.0,
-                    activeColor: Colors.red,
-                    inactiveColor: Colors.white12,
-                    onChanged: (values) {
-                      setState(() {
-                        _startValue = values.start;
-                        _endValue = values.end;
-                      });
-                    },
-                    onChangeStart: (values) => _player.pause(),
-                    onChangeEnd: (values) {
-                      _player.seek(
-                        Duration(milliseconds: values.start.toInt()),
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      onPressed: _isProcessing ? null : _cutVideo,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(15),
-                        ),
-                      ),
-                      child: _isProcessing
-                          ? const CircularProgressIndicator(color: Colors.white)
-                          : const Text(
-                              'CUT VIDEO',
-                              style: TextStyle(
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              _formatDuration(
+                                Duration(milliseconds: _startValue.toInt()),
+                              ),
+                              style: const TextStyle(
+                                color: Colors.red,
                                 fontWeight: FontWeight.bold,
-                                fontSize: 16,
                               ),
                             ),
+                            Text(
+                              _formatDuration(
+                                Duration(milliseconds: _endValue.toInt()),
+                              ),
+                              style: const TextStyle(
+                                color: Colors.red,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        RangeSlider(
+                          values: RangeValues(_startValue, _endValue),
+                          min: 0.0,
+                          max: _duration.inMilliseconds.toDouble() > 0
+                              ? _duration.inMilliseconds.toDouble()
+                              : 1.0,
+                          activeColor: Colors.red,
+                          inactiveColor: Colors.white12,
+                          onChanged: (values) {
+                            setState(() {
+                              _startValue = values.start;
+                              _endValue = values.end;
+                            });
+                          },
+                          onChangeStart: (values) => _player.pause(),
+                          onChangeEnd: (values) {
+                            _player.seek(
+                              Duration(milliseconds: values.start.toInt()),
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          width: double.infinity,
+                          height: 50,
+                          child: ElevatedButton(
+                            onPressed: _isProcessing ? null : _cutVideo,
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(15),
+                              ),
+                            ),
+                            child: _isProcessing
+                                ? const CircularProgressIndicator(
+                                    color: Colors.white,
+                                  )
+                                : const Text(
+                                    'CUT VIDEO',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Select range and click "CUT VIDEO" to trim.',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  const Text(
-                    'Select the range and click "CUT VIDEO" to trim.',
-                    style: TextStyle(color: Colors.grey, fontSize: 12),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
-        ],
+        ),
       ),
     );
   }

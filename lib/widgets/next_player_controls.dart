@@ -6,6 +6,7 @@ import '../core/video_player_controller.dart';
 import '../widgets/subtitle_selection_widget.dart';
 import '../services/playlist_service.dart';
 import '../screens/video_cutter_screen.dart';
+import '../widgets/equalizer_widget.dart';
 
 class NextPlayerControls extends ConsumerStatefulWidget {
   const NextPlayerControls({super.key});
@@ -57,19 +58,35 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
 
   void _startHideTimer() {
     _hideTimer?.cancel();
+    final videoState = ref.read(videoPlayerControllerProvider);
+
+    // Don't auto-hide controls when video is paused
+    if (!videoState.isPlaying) {
+      return;
+    }
+
     _hideTimer = Timer(const Duration(seconds: 3), () {
       if (mounted && _fadeController.status == AnimationStatus.completed) {
-        _fadeController.reverse();
+        final currentState = ref.read(videoPlayerControllerProvider);
+        // Only hide if video is still playing
+        if (currentState.isPlaying) {
+          _fadeController.reverse();
+        }
       }
     });
   }
 
   void _toggleControlsVisibility() {
+    final videoState = ref.read(videoPlayerControllerProvider);
+
     if (_fadeController.status == AnimationStatus.completed) {
       _fadeController.reverse();
     } else {
       _fadeController.forward();
-      _startHideTimer();
+      // Only start hide timer if video is playing
+      if (videoState.isPlaying) {
+        _startHideTimer();
+      }
     }
   }
 
@@ -77,6 +94,22 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   Widget build(BuildContext context) {
     final videoState = ref.watch(videoPlayerControllerProvider);
     final videoController = ref.read(videoPlayerControllerProvider.notifier);
+
+    // Listen to playback state changes
+    ref.listen(videoPlayerControllerProvider.select((s) => s.isPlaying), (
+      _,
+      __,
+    ) {
+      final currentState = ref.read(videoPlayerControllerProvider);
+      if (!currentState.isPlaying &&
+          _fadeController.status == AnimationStatus.dismissed) {
+        // Show controls when video is paused
+        _fadeController.forward();
+      } else if (currentState.isPlaying) {
+        // Start hide timer when video starts playing
+        _startHideTimer();
+      }
+    });
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -346,38 +379,51 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                       ),
                     ],
                   ),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _buildLockButton(videoState, videoController),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: const Icon(
-                              Icons.skip_previous,
-                              color: Colors.white,
-                              size: 30,
-                            ),
-                            onPressed: () => _playPrevious(videoController),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        _buildLockButton(videoState, videoController),
+                        // Wrap with Expanded/Flexible to prevent overflow
+                        Expanded(
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.skip_previous,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () => _playPrevious(videoController),
+                              ),
+                              const SizedBox(width: 20),
+                              _buildPlayPauseButton(
+                                videoState,
+                                videoController,
+                              ),
+                              const SizedBox(width: 20),
+                              IconButton(
+                                icon: const Icon(
+                                  Icons.skip_next,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () => _playNext(videoController),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          _buildPlayPauseButton(videoState, videoController),
-                          const SizedBox(width: 12),
-                          IconButton(
-                            icon: const Icon(
-                              Icons.skip_next,
-                              color: Colors.white,
-                              size: 30,
-                            ),
-                            onPressed: () => _playNext(videoController),
-                          ),
-                        ],
-                      ),
-                      _buildAspectRatioButton(videoState, videoController),
-                    ],
+                        ),
+                        _buildAspectRatioButton(videoState, videoController),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                 ] else ...[
                   Center(child: _buildLockButton(videoState, videoController)),
                   const SizedBox(height: 16),
@@ -393,16 +439,30 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   Future<void> _playPrevious(
     VideoPlayerControllerNotifier videoController,
   ) async {
-    final prev = PlaylistService.getPreviousVideo();
-    if (prev != null) {
-      await videoController.initializeVideo(null, prev.path);
+    // Check if we have folder videos for navigation
+    final videoState = ref.read(videoPlayerControllerProvider);
+    if (videoState.currentFolderVideos.isNotEmpty) {
+      await videoController.playPreviousInFolder();
+    } else {
+      // Fallback to playlist navigation
+      final prev = PlaylistService.getPreviousVideo();
+      if (prev != null) {
+        await videoController.initializeVideo(null, prev.path);
+      }
     }
   }
 
   Future<void> _playNext(VideoPlayerControllerNotifier videoController) async {
-    final next = PlaylistService.getNextVideo();
-    if (next != null) {
-      await videoController.initializeVideo(null, next.path);
+    // Check if we have folder videos for navigation
+    final videoState = ref.read(videoPlayerControllerProvider);
+    if (videoState.currentFolderVideos.isNotEmpty) {
+      await videoController.playNextInFolder();
+    } else {
+      // Fallback to playlist navigation
+      final next = PlaylistService.getNextVideo();
+      if (next != null) {
+        await videoController.initializeVideo(null, next.path);
+      }
     }
   }
 
@@ -416,7 +476,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         videoController.togglePlayPause();
       },
       child: Container(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(8),
         decoration: const BoxDecoration(
           color: Colors.white,
           shape: BoxShape.circle,
@@ -424,7 +484,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         child: Icon(
           videoState.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
           color: Colors.black,
-          size: 32,
+          size: 24,
         ),
       ),
     );
@@ -446,11 +506,11 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         },
         customBorder: const CircleBorder(),
         child: Padding(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(8),
           child: Icon(
             videoState.isLocked ? Icons.lock : Icons.lock_open,
             color: Colors.white,
-            size: 22,
+            size: 20,
           ),
         ),
       ),
@@ -471,11 +531,11 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         },
         customBorder: const CircleBorder(),
         child: Padding(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(8),
           child: Icon(
             _getAspectRatioIcon(videoState.aspectRatioMode),
             color: Colors.white,
-            size: 22,
+            size: 20,
           ),
         ),
       ),
@@ -567,6 +627,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) => const CastingControlsWidget(),
     );
   }
@@ -575,6 +638,10 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) =>
           PlaybackSpeedSelectionWidget(videoController: videoController),
     );
@@ -594,11 +661,67 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     );
   }
 
-  void _showAudioTrackSelection(
-    VideoPlayerControllerNotifier videoController,
-  ) {}
+  void _showAudioTrackSelection(VideoPlayerControllerNotifier videoController) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.7,
+      ),
+      builder: (context) => Container(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Audio Track',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  ListTile(
+                    title: const Text(
+                      'Default Track',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'System default audio track',
+                      style: TextStyle(color: Color(0xFFBDBDBD)),
+                    ),
+                    leading: const Icon(Icons.audiotrack, color: Colors.white),
+                    onTap: () {
+                      videoController.setAudioTrack(null);
+                      Navigator.pop(context);
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
-  void _showEqualizer() {}
+  void _showEqualizer() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => const EqualizerWidget(),
+    );
+  }
 
   void _showPiPControls(VideoPlayerControllerNotifier videoController) {
     videoController.enterPIP();
@@ -611,6 +734,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
       isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) => Container(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(context).size.height * 0.7,
@@ -726,6 +852,9 @@ class PlaybackSpeedSelectionWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(16),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.7,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -737,16 +866,24 @@ class PlaybackSpeedSelectionWidget extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
-          ...[0.5, 0.75, 1.0, 1.25, 1.5, 2.0].map(
-            (speed) => ListTile(
-              title: Text(
-                '${speed}x',
-                style: const TextStyle(color: Colors.white),
-              ),
-              onTap: () {
-                videoController.setPlaybackSpeed(speed);
-                Navigator.pop(context);
-              },
+          const SizedBox(height: 16),
+          Expanded(
+            child: ListView(
+              shrinkWrap: true,
+              children: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                  .map(
+                    (speed) => ListTile(
+                      title: Text(
+                        '${speed}x',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      onTap: () {
+                        videoController.setPlaybackSpeed(speed);
+                        Navigator.pop(context);
+                      },
+                    ),
+                  )
+                  .toList(),
             ),
           ),
         ],

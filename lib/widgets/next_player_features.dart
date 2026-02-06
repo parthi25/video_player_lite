@@ -183,18 +183,26 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return ListTile(
-      leading: Icon(icon, color: Colors.red, size: 24),
-      title: Text(
-        title,
-        style: const TextStyle(color: Colors.white, fontSize: 16),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        leading: Icon(icon, color: Colors.red, size: 28),
+        title: Text(
+          title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 18,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(color: Color(0xFFBDBDBD), fontSize: 15),
+        ),
+        trailing: const Icon(Icons.chevron_right, color: Colors.grey, size: 20),
+        onTap: onTap,
       ),
-      subtitle: Text(
-        subtitle,
-        style: TextStyle(color: Colors.grey[400], fontSize: 14),
-      ),
-      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
-      onTap: onTap,
     );
   }
 
@@ -202,8 +210,15 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) => Container(
         padding: const EdgeInsets.all(16),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -216,18 +231,25 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
               ),
             ),
             const SizedBox(height: 16),
-            ...[0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0].map((speed) {
-              return ListTile(
-                title: Text(
-                  '${speed}x',
-                  style: const TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  videoController.setPlaybackSpeed(speed);
-                  Navigator.of(context).pop();
-                },
-              );
-            }),
+            Expanded(
+              child: ListView(
+                shrinkWrap: true,
+                children: [0.5, 0.75, 1.0, 1.25, 1.5, 2.0]
+                    .map(
+                      (speed) => ListTile(
+                        title: Text(
+                          '${speed}x',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        onTap: () {
+                          videoController.setPlaybackSpeed(speed);
+                          Navigator.pop(context);
+                        },
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
           ],
         ),
       ),
@@ -237,12 +259,18 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
   void _showAspectRatioSelection(
     VideoPlayerControllerNotifier videoController,
   ) {
-    final videoState = ref.read(videoPlayerControllerProvider);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) => Container(
         padding: const EdgeInsets.all(16),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -255,21 +283,32 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
               ),
             ),
             const SizedBox(height: 16),
-            ...AspectRatioMode.values.map((mode) {
-              return ListTile(
-                title: Text(
-                  mode.label,
-                  style: const TextStyle(color: Colors.white),
-                ),
-                trailing: videoState.aspectRatioMode == mode
-                    ? const Icon(Icons.check, color: Colors.blue)
-                    : null,
-                onTap: () {
-                  videoController.setAspectRatio(mode);
-                  Navigator.of(context).pop();
-                },
-              );
-            }),
+            Expanded(
+              child: ListView(
+                shrinkWrap: true,
+                children: AspectRatioMode.values
+                    .map(
+                      (mode) => ListTile(
+                        title: Text(
+                          mode.label,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        trailing:
+                            ref
+                                    .read(videoPlayerControllerProvider)
+                                    .aspectRatioMode ==
+                                mode
+                            ? const Icon(Icons.check, color: Colors.red)
+                            : null,
+                        onTap: () {
+                          videoController.setAspectRatio(mode);
+                          Navigator.pop(context);
+                        },
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
           ],
         ),
       ),
@@ -277,11 +316,16 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
   }
 
   void _showAudioTrackSelection(VideoPlayerControllerNotifier videoController) {
+    final videoState = ref.read(videoPlayerControllerProvider);
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
       builder: (context) => Container(
         padding: const EdgeInsets.all(16),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.7,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -294,18 +338,55 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
               ),
             ),
             const SizedBox(height: 16),
-            ...List.generate(5, (index) {
-              return ListTile(
-                title: Text(
-                  'Track ${index + 1}',
-                  style: const TextStyle(color: Colors.white),
-                ),
-                onTap: () {
-                  videoController.setAudioTrack(index);
-                  Navigator.of(context).pop();
-                },
-              );
-            }),
+            Expanded(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  // Default track option
+                  ListTile(
+                    title: const Text(
+                      'Default Track',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                    subtitle: const Text(
+                      'System default audio track',
+                      style: TextStyle(color: Color(0xFFBDBDBD)),
+                    ),
+                    leading: const Icon(Icons.audiotrack, color: Colors.white),
+                    onTap: () {
+                      videoController.setAudioTrack(null);
+                      Navigator.of(context).pop();
+                    },
+                  ),
+                  // Dynamic audio tracks
+                  ...videoState.audioTracks.asMap().entries.map((entry) {
+                    final index = entry.key;
+                    final track = entry.value;
+                    return ListTile(
+                      title: Text(
+                        track.displayName,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      subtitle: Text(
+                        '${track.language}${track.codec != null ? ' • ${track.codec}' : ''}${track.channels != null ? ' • ${track.channels}ch' : ''}',
+                        style: const TextStyle(color: Color(0xFFBDBDBD)),
+                      ),
+                      leading: const Icon(
+                        Icons.audiotrack,
+                        color: Colors.white,
+                      ),
+                      trailing: videoState.audioTrackIndex == index
+                          ? const Icon(Icons.check, color: Colors.red)
+                          : null,
+                      onTap: () {
+                        videoController.setAudioTrack(index);
+                        Navigator.of(context).pop();
+                      },
+                    );
+                  }),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -340,8 +421,12 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
+      isScrollControlled: true,
       builder: (context) => Container(
         padding: const EdgeInsets.all(16),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.8,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -354,12 +439,28 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
               ),
             ),
             const SizedBox(height: 16),
-            _buildAdvancedTile('Equalizer', 'Audio enhancement'),
-            _buildAdvancedTile('Hardware Decoder', 'Use hardware acceleration'),
-            _buildAdvancedTile('Software Decoder', 'Use software decoding'),
-            _buildAdvancedTile('Skip Silence', 'Skip silent parts'),
-            _buildAdvancedTile('Loop Video', 'Repeat playback'),
-            _buildAdvancedTile('Picture-in-Picture', 'Floating window mode'),
+            Expanded(
+              child: ListView(
+                shrinkWrap: true,
+                children: [
+                  _buildAdvancedTile('Equalizer', 'Audio enhancement'),
+                  _buildAdvancedTile(
+                    'Hardware Decoder',
+                    'Use hardware acceleration',
+                  ),
+                  _buildAdvancedTile(
+                    'Software Decoder',
+                    'Use software decoding',
+                  ),
+                  _buildAdvancedTile('Skip Silence', 'Skip silent parts'),
+                  _buildAdvancedTile('Loop Video', 'Repeat playback'),
+                  _buildAdvancedTile(
+                    'Picture-in-Picture',
+                    'Floating window mode',
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -369,7 +470,7 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
   Widget _buildAdvancedTile(String title, String subtitle) {
     return ListTile(
       title: Text(title, style: const TextStyle(color: Colors.white)),
-      subtitle: Text(subtitle, style: TextStyle(color: Colors.grey[400])),
+      subtitle: Text(subtitle, style: TextStyle(color: Color(0xFFBDBDBD))),
       onTap: () {
         Navigator.of(context).pop();
         ScaffoldMessenger.of(
