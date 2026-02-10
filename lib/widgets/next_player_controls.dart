@@ -122,8 +122,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
           child: Stack(
             children: [
               Container(color: Colors.black26),
-              if (!isLocked)
-                _buildTopControls(videoController),
+              if (!isLocked) _buildTopControls(videoController),
               _buildBottomControls(videoController),
               if (isLocked)
                 Center(
@@ -146,12 +145,12 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     );
   }
 
-  Widget _buildTopControls(
-    VideoPlayerControllerNotifier videoController,
-  ) {
+  Widget _buildTopControls(VideoPlayerControllerNotifier videoController) {
     // Select only what we need for the top bar
     final videoName = ref.watch(
-      videoPlayerControllerProvider.select((s) => s.videoPath?.split(Platform.pathSeparator).last ?? 'Parthi Play'),
+      videoPlayerControllerProvider.select(
+        (s) => s.videoPath?.split(Platform.pathSeparator).last ?? 'Parthi Play',
+      ),
     );
 
     return Positioned(
@@ -170,38 +169,46 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: () async {
-                      // Use the provided back callback if available (handles overlay mode)
-                      final backCallback = ref.read(videoPlayerBackCallbackProvider);
-                      
-                      await videoController.pause();
-                      videoController.reset();
-                      
-                      // Instant navigation - removed delay
-                      if (backCallback != null) {
-                        backCallback();
-                      } else if (context.mounted) {
-                        // Fallback to navigator pop
-                        if (Navigator.of(context).canPop()) {
-                          Navigator.of(context).pop();
+            Row(
+              children: [
+                IconButton(
+                  onPressed: () async {
+                    // Use the provided back callback if available (handles overlay mode)
+                    final backCallback = ref.read(
+                      videoPlayerBackCallbackProvider,
+                    );
+
+                    await videoController.pause();
+                    videoController.reset();
+
+                    // Instant navigation - removed delay
+                    if (backCallback != null) {
+                      backCallback();
+                    } else if (mounted) {
+                      // Fallback to navigator pop
+                      if (Navigator.of(context).canPop()) {
+                        Navigator.of(context).pop();
+                      } else {
+                        final navigator = Navigator.of(
+                          context,
+                          rootNavigator: false,
+                        );
+                        if (navigator.canPop()) {
+                          navigator.pop();
                         } else {
-                          final navigator = Navigator.of(context, rootNavigator: false);
-                          if (navigator.canPop()) {
-                            navigator.pop();
-                          } else {
-                            final rootNavigator = Navigator.of(context, rootNavigator: true);
-                            if (rootNavigator.canPop()) {
-                              rootNavigator.pop();
-                            }
+                          final rootNavigator = Navigator.of(
+                            context,
+                            rootNavigator: true,
+                          );
+                          if (rootNavigator.canPop()) {
+                            rootNavigator.pop();
                           }
                         }
                       }
-                    },
-                    icon: const Icon(Icons.arrow_back, color: Colors.white),
-                  ),
+                    }
+                  },
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                ),
                 Expanded(
                   child: Row(
                     children: [
@@ -220,7 +227,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                       Consumer(
                         builder: (context, ref, _) {
                           final useHwDec = ref.watch(
-                            videoPlayerControllerProvider.select((s) => s.useHwDec),
+                            videoPlayerControllerProvider.select(
+                              (s) => s.useHwDec,
+                            ),
                           );
                           return Material(
                             color: Colors.transparent,
@@ -241,8 +250,8 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                                     width: 1.5,
                                   ),
                                   borderRadius: BorderRadius.circular(4),
-                                  color: useHwDec 
-                                      ? Colors.blue.withValues(alpha: 0.2) 
+                                  color: useHwDec
+                                      ? Colors.blue.withValues(alpha: 0.2)
                                       : Colors.grey.withValues(alpha: 0.2),
                                 ),
                                 child: Text(
@@ -278,12 +287,10 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     );
   }
 
-  Widget _buildActionRibbon(
-    VideoPlayerControllerNotifier videoController,
-  ) {
+  Widget _buildActionRibbon(VideoPlayerControllerNotifier videoController) {
     final bool isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
-    
+
     final orientation = ref.watch(
       videoPlayerControllerProvider.select((s) => s.orientation),
     );
@@ -389,9 +396,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     );
   }
 
-  Widget _buildBottomControls(
-    VideoPlayerControllerNotifier videoController,
-  ) {
+  Widget _buildBottomControls(VideoPlayerControllerNotifier videoController) {
     final isLocked = ref.watch(
       videoPlayerControllerProvider.select((s) => s.isLocked),
     );
@@ -439,7 +444,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                               enabledThumbRadius: 8,
                             ),
                             activeTrackColor: Colors.red.shade600,
-                            inactiveTrackColor: Colors.white.withValues(alpha: 0.3),
+                            inactiveTrackColor: Colors.white.withValues(
+                              alpha: 0.3,
+                            ),
                             thumbColor: Colors.red.shade600,
                             overlayShape: const RoundSliderOverlayShape(
                               overlayRadius: 16,
@@ -448,12 +455,10 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                           child: Slider(
                             min: 0.0,
                             max: duration.inMilliseconds.toDouble(),
-                            value: position.inMilliseconds
-                                .toDouble()
-                                .clamp(
-                                  0.0,
-                                  duration.inMilliseconds.toDouble(),
-                                ),
+                            value: position.inMilliseconds.toDouble().clamp(
+                              0.0,
+                              duration.inMilliseconds.toDouble(),
+                            ),
                             onChangeStart: (_) {
                               _isSeeking = true;
                             },
@@ -464,7 +469,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                               if (!_isSeeking) {
                                 _startHideTimer();
                               }
-                              _seekPosition = Duration(milliseconds: value.round());
+                              _seekPosition = Duration(
+                                milliseconds: value.round(),
+                              );
                               videoController.seekTo(_seekPosition);
                             },
                           ),
@@ -485,9 +492,10 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         _buildLockButton(videoController),
-                        Expanded(
+                        Flexible(
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.center,
+                            mainAxisSize: MainAxisSize.min,
                             children: [
                               IconButton(
                                 icon: const Icon(
@@ -499,11 +507,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                                 constraints: const BoxConstraints(),
                                 onPressed: () => _playPrevious(videoController),
                               ),
-                              const SizedBox(width: 20),
-                              _buildPlayPauseButton(
-                                videoController,
-                              ),
-                              const SizedBox(width: 20),
+                              const SizedBox(width: 16),
+                              _buildPlayPauseButton(videoController),
+                              const SizedBox(width: 16),
                               IconButton(
                                 icon: const Icon(
                                   Icons.skip_next,
@@ -564,9 +570,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     }
   }
 
-  Widget _buildPlayPauseButton(
-    VideoPlayerControllerNotifier videoController,
-  ) {
+  Widget _buildPlayPauseButton(VideoPlayerControllerNotifier videoController) {
     final isPlaying = ref.watch(
       videoPlayerControllerProvider.select((s) => s.isPlaying),
     );
@@ -582,10 +586,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
-            colors: [
-              Colors.white,
-              Colors.grey[100]!,
-            ],
+            colors: [Colors.white, Colors.grey[100]!],
           ),
           shape: BoxShape.circle,
           boxShadow: [
@@ -609,9 +610,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     );
   }
 
-  Widget _buildLockButton(
-    VideoPlayerControllerNotifier videoController,
-  ) {
+  Widget _buildLockButton(VideoPlayerControllerNotifier videoController) {
     final isLocked = ref.watch(
       videoPlayerControllerProvider.select((s) => s.isLocked),
     );
@@ -713,9 +712,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     }
   }
 
-  Widget _buildSidePanel(
-    VideoPlayerControllerNotifier videoController,
-  ) {
+  Widget _buildSidePanel(VideoPlayerControllerNotifier videoController) {
     return Container(
       width: 250,
       color: Colors.black.withValues(alpha: 0.9),
@@ -851,7 +848,10 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                           'System default audio track',
                           style: TextStyle(color: Color(0xFFBDBDBD)),
                         ),
-                        leading: const Icon(Icons.audiotrack, color: Colors.white),
+                        leading: const Icon(
+                          Icons.audiotrack,
+                          color: Colors.white,
+                        ),
                         trailing: currentState.audioTrackIndex < 0
                             ? const Icon(Icons.check, color: Colors.red)
                             : null,
@@ -861,7 +861,9 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                         },
                       ),
                       if (currentState.audioTracks.isNotEmpty)
-                        ...currentState.audioTracks.asMap().entries.map((entry) {
+                        ...currentState.audioTracks.asMap().entries.map((
+                          entry,
+                        ) {
                           final index = entry.key;
                           final track = entry.value;
                           return ListTile(
@@ -930,7 +932,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
       builder: (context) => Consumer(
         builder: (context, ref, child) {
           final settings = ref.watch(videoPlayerControllerProvider);
-          
+
           return Container(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -946,9 +948,14 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                 ),
                 const SizedBox(height: 16),
                 SwitchListTile(
-                  title: const Text('Hardware Decoding (HW)', style: TextStyle(color: Colors.white)),
+                  title: const Text(
+                    'Hardware Decoding (HW)',
+                    style: TextStyle(color: Colors.white),
+                  ),
                   subtitle: Text(
-                    settings.useHwDec ? 'Using Hardware Decoder' : 'Using Software Decoder (SW)',
+                    settings.useHwDec
+                        ? 'Using Hardware Decoder'
+                        : 'Using Software Decoder (SW)',
                     style: TextStyle(color: Colors.grey[400]),
                   ),
                   value: settings.useHwDec,
@@ -957,11 +964,14 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                     // Close menu to restart player
                     Navigator.pop(context);
                   },
-                  activeColor: Colors.red,
+                  activeThumbColor: Colors.red,
                 ),
                 const Divider(color: Colors.white24),
                 ListTile(
-                  title: const Text('Volume Boost', style: TextStyle(color: Colors.white)),
+                  title: const Text(
+                    'Volume Boost',
+                    style: TextStyle(color: Colors.white),
+                  ),
                   subtitle: Text(
                     'Current: ${(settings.volumeBoost * 100).toInt()}%',
                     style: TextStyle(color: Colors.grey[400]),
@@ -973,7 +983,8 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                       min: 1.0,
                       max: 2.0,
                       activeColor: Colors.red,
-                      onChanged: (value) => videoController.setVolumeBoost(value),
+                      onChanged: (value) =>
+                          videoController.setVolumeBoost(value),
                     ),
                   ),
                 ),

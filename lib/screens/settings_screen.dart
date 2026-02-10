@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'about_screen.dart';
+import 'scan_directories_settings_screen.dart';
 import '../services/theme_service.dart';
 import '../services/performance_service.dart';
 import '../widgets/settings_section.dart';
@@ -17,7 +18,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late bool _hwDecoding;
   late bool _frameDrop;
   late bool _skipLoopFilter;
-  
+
   // App State
   bool _skipSilence = false;
 
@@ -33,7 +34,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
@@ -61,8 +62,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   'Use GPU for smooth video decoding',
                   _hwDecoding,
                   (value) {
-                     setState(() => _hwDecoding = value);
-                     PerformanceService.setHardwareDecoding(value);
+                    setState(() => _hwDecoding = value);
+                    PerformanceService.setHardwareDecoding(value);
                   },
                 ),
                 _buildSwitchSetting(
@@ -94,6 +95,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               icon: Icons.tune_rounded,
               children: [
                 _buildNavigationSetting(
+                  'Scan Directories',
+                  'Manage folders for video scanning',
+                  Icons.folder_special,
+                  () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          const ScanDirectoriesSettingsScreen(),
+                    ),
+                  ),
+                ),
+                _buildNavigationSetting(
                   'File Browser',
                   'Manage folders and view hidden files',
                   Icons.folder_open_rounded,
@@ -121,7 +134,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   Icons.android,
                   () => Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const AboutScreen()),
+                    MaterialPageRoute(
+                      builder: (context) => const AboutScreen(),
+                    ),
                   ),
                 ),
                 _buildNavigationSetting(
@@ -185,7 +200,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     'Customize app look',
                     style: TextStyle(
                       fontSize: 14,
-                      color: theme.textTheme.bodyMedium?.color?.withOpacity(0.6),
+                      color: theme.textTheme.bodyMedium?.color?.withValues(
+                        alpha: 0.6,
+                      ),
                     ),
                   ),
                 ],
@@ -200,7 +217,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   'Light',
                   Icons.wb_sunny_rounded,
                   !isDark,
-                  () => ref.read(themeModeProvider.notifier).setTheme(ThemeMode.light),
+                  () => ref
+                      .read(themeModeProvider.notifier)
+                      .setTheme(ThemeMode.light),
                 ),
               ),
               const SizedBox(width: 12),
@@ -209,7 +228,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   'Dark',
                   Icons.nightlight_round,
                   isDark,
-                  () => ref.read(themeModeProvider.notifier).setTheme(ThemeMode.dark),
+                  () => ref
+                      .read(themeModeProvider.notifier)
+                      .setTheme(ThemeMode.dark),
                 ),
               ),
             ],
@@ -219,15 +240,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildThemeCard(String label, IconData icon, bool isSelected, VoidCallback onTap) {
+  Widget _buildThemeCard(
+    String label,
+    IconData icon,
+    bool isSelected,
+    VoidCallback onTap,
+  ) {
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         padding: const EdgeInsets.symmetric(vertical: 16),
         decoration: BoxDecoration(
-          color: isSelected 
-              ? Colors.red.withValues(alpha: 0.1) 
+          color: isSelected
+              ? Colors.red.withValues(alpha: 0.1)
               : Colors.grey.withValues(alpha: 0.05),
           borderRadius: BorderRadius.circular(16),
           border: Border.all(
@@ -237,11 +263,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         ),
         child: Column(
           children: [
-            Icon(
-              icon,
-              color: isSelected ? Colors.red : Colors.grey,
-              size: 28,
-            ),
+            Icon(icon, color: isSelected ? Colors.red : Colors.grey, size: 28),
             const SizedBox(height: 8),
             Text(
               label,
@@ -283,7 +305,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 Text(
                   description,
                   style: TextStyle(
-                    color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                    color: theme.textTheme.bodyMedium?.color?.withValues(
+                      alpha: 0.7,
+                    ),
                     fontSize: 13,
                   ),
                 ),
@@ -293,7 +317,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: Colors.white,
+            activeThumbColor: Colors.white,
             activeTrackColor: Colors.red,
           ),
         ],
@@ -320,14 +344,10 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: theme.colorScheme.primary.withOpacity(0.1),
+                  color: theme.colorScheme.primary.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(10),
                 ),
-                child: Icon(
-                  icon,
-                  color: theme.colorScheme.primary,
-                  size: 22,
-                ),
+                child: Icon(icon, color: theme.colorScheme.primary, size: 22),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -346,7 +366,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     Text(
                       description,
                       style: TextStyle(
-                        color: theme.textTheme.bodyMedium?.color?.withOpacity(0.7),
+                        color: theme.textTheme.bodyMedium?.color?.withValues(
+                          alpha: 0.7,
+                        ),
                         fontSize: 13,
                       ),
                     ),
@@ -355,7 +377,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               Icon(
                 Icons.chevron_right_rounded,
-                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.5),
+                color: theme.textTheme.bodyMedium?.color?.withValues(
+                  alpha: 0.5,
+                ),
                 size: 24,
               ),
             ],
@@ -382,27 +406,29 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             Text(
               'Privacy Policy',
               style: TextStyle(
-                fontSize: 24, 
+                fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: theme.textTheme.titleLarge?.color
+                color: theme.textTheme.titleLarge?.color,
               ),
             ),
             const SizedBox(height: 16),
             Text(
               'We respect your privacy. All your private videos, passwords, and playback history are stored strictly locally on your device.',
               style: TextStyle(
-                fontSize: 16, 
+                fontSize: 16,
                 height: 1.5,
-                color: theme.textTheme.bodyMedium?.color
+                color: theme.textTheme.bodyMedium?.color,
               ),
             ),
             const SizedBox(height: 16),
             Text(
               '• No data upload to servers.\n• No tracking or analytics.\n• Offline-first design.',
               style: TextStyle(
-                fontSize: 14, 
+                fontSize: 14,
                 height: 1.6,
-                color: theme.textTheme.bodyMedium?.color?.withOpacity(0.8)
+                color: theme.textTheme.bodyMedium?.color?.withValues(
+                  alpha: 0.8,
+                ),
               ),
             ),
             const SizedBox(height: 24),
@@ -413,7 +439,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
                 onPressed: () => Navigator.pop(context),
                 child: const Text('Close'),

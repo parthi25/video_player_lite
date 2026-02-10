@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as path;
+import 'dart:io';
 import '../services/vault_service.dart';
 import '../widgets/next_video_player.dart';
 
@@ -143,6 +147,90 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
     _loadVaultVideos();
   }
 
+  Future<void> _shareSelectedVideos() async {
+    if (_selectedVideos.isEmpty) return;
+
+    final confirmed = await _showConfirmDialog(
+      'Share Videos',
+      'Are you sure you want to share ${_selectedVideos.length} video(s)? This will export them from vault.',
+    );
+
+    if (!confirmed) return;
+
+    try {
+      int successCount = 0;
+      List<String> exportedPaths = [];
+
+      for (final videoId in _selectedVideos) {
+        try {
+          // Find the video
+          final video = _vaultVideos.firstWhere((v) => v.id == videoId);
+
+          // Export video to temporary location for sharing
+          final exportedPath = await _exportVideoForSharing(video);
+          if (exportedPath != null) {
+            exportedPaths.add(exportedPath);
+            successCount++;
+          }
+        } catch (e) {
+          debugPrint('Error exporting video $videoId: $e');
+        }
+      }
+
+      if (mounted && exportedPaths.isNotEmpty) {
+        // Share the exported files
+        await Share.shareXFiles(
+          exportedPaths.map((path) => XFile(path)).toList(),
+          subject: 'Shared Videos from Parthi Play',
+          text:
+              'Check out these ${exportedPaths.length} video(s) from my private vault!',
+        );
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('$successCount video(s) shared successfully'),
+              backgroundColor: Colors.green.shade700,
+            ),
+          );
+        }
+      }
+
+      _clearSelection();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error sharing videos: $e'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<String?> _exportVideoForSharing(VaultVideo video) async {
+    try {
+      // Get temporary directory
+      final tempDir = await getTemporaryDirectory();
+      final fileName = 'shared_${video.fileName}';
+      final exportPath = path.join(tempDir.path, fileName);
+
+      // Copy hidden video to temporary location
+      final sourceFile = File(video.hiddenPath);
+
+      if (await sourceFile.exists()) {
+        await sourceFile.copy(exportPath);
+        return exportPath;
+      }
+
+      return null;
+    } catch (e) {
+      debugPrint('Error exporting video for sharing: $e');
+      return null;
+    }
+  }
+
   Future<void> _deleteSelectedVideos() async {
     if (_selectedVideos.isEmpty) return;
 
@@ -212,7 +300,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'My Videos',
+              'Privacy Vault',
               style: TextStyle(
                 color: Colors.white,
                 fontSize: 20,
@@ -220,7 +308,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
               ),
             ),
             Text(
-              '${_vaultVideos.length} videos',
+              '${_vaultVideos.length} protected videos',
               style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
             ),
           ],
@@ -328,15 +416,15 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.folder_open, size: 80, color: Colors.grey.shade600),
+            Icon(Icons.lock, size: 80, color: Colors.grey.shade600),
             const SizedBox(height: 20),
             Text(
-              'No videos yet',
+              'Privacy Vault is Empty',
               style: TextStyle(color: Colors.grey.shade400, fontSize: 18),
             ),
             const SizedBox(height: 8),
             Text(
-              'Add videos to see them here',
+              'Add private videos to keep them secure',
               style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
             ),
           ],
@@ -377,11 +465,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                     color: Colors.grey.shade800,
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(
-                    Icons.play_circle_outline,
-                    color: Colors.grey,
-                    size: 30,
-                  ),
+                  child: const Icon(Icons.lock, color: Colors.grey, size: 30),
                 ),
                 title: Text(
                   video.fileName,
@@ -406,7 +490,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'Added: ${_formatDate(video.hiddenDate)}',
+                      'Protected: ${_formatDate(video.hiddenDate)}',
                       style: TextStyle(
                         color: Colors.grey.shade500,
                         fontSize: 12,
@@ -447,7 +531,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                                 scaffoldMessenger.showSnackBar(
                                   SnackBar(
                                     content: Text(
-                                      'Video removed: ${video.fileName}',
+                                      'Video removed from vault: ${video.fileName}',
                                     ),
                                     backgroundColor: Colors.green.shade700,
                                   ),
@@ -493,7 +577,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                                   color: Colors.green,
                                 ),
                                 SizedBox(width: 8),
-                                Text('Remove'),
+                                Text('Remove from Vault'),
                               ],
                             ),
                           ),
@@ -550,6 +634,19 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
         if (_selectedVideos.isNotEmpty) ...[
+          ScaleTransition(
+            scale: _fabAnimation,
+            child: FloatingActionButton.extended(
+              onPressed: _shareSelectedVideos,
+              backgroundColor: Colors.blue.shade700,
+              icon: const Icon(Icons.share, color: Colors.white),
+              label: Text(
+                'Share (${_selectedVideos.length})',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
           ScaleTransition(
             scale: _fabAnimation,
             child: FloatingActionButton.extended(
@@ -651,13 +748,13 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
             children: [
               CircularProgressIndicator(),
               SizedBox(width: 16),
-              Text('Securely hiding video...'),
+              Text('Securing video in vault...'),
             ],
           ),
         ),
       );
 
-      // Hide the video with encryption
+      // Hide video with encryption
       final success = await VaultService.hideVideo(filePath);
 
       // Check mounted after async call
@@ -668,7 +765,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
         scaffoldMessenger.showSnackBar(
           SnackBar(
             content: Text(
-              '✓ Video securely hidden and encrypted',
+              '✓ Video securely hidden in privacy vault',
               style: const TextStyle(color: Colors.white),
             ),
             backgroundColor: Colors.green.shade700,

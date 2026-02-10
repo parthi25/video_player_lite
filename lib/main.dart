@@ -12,9 +12,17 @@ import 'screens/vault_security_setup_screen.dart';
 import 'screens/file_browser_screen.dart';
 import 'screens/next_file_browser_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  MediaKit.ensureInitialized();
+
+  try {
+    // MediaKit.ensureInitialized() is synchronous, wrap in try-catch
+    MediaKit.ensureInitialized();
+    debugPrint('MediaKit initialized successfully');
+  } catch (e) {
+    debugPrint('MediaKit initialization failed: $e');
+  }
+
   runApp(const ProviderScope(child: NextPlayerApp()));
 }
 
@@ -54,7 +62,9 @@ class NextPlayerApp extends ConsumerWidget {
         cardTheme: CardThemeData(
           color: Colors.white,
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         ),
         dividerColor: Colors.grey[300],
@@ -93,7 +103,9 @@ class NextPlayerApp extends ConsumerWidget {
         cardTheme: CardThemeData(
           color: const Color(0xFF1A1A1A),
           elevation: 4,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         ),
         dividerColor: const Color(0xFF2A2A2A),

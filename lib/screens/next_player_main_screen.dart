@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:share_plus/share_plus.dart';
 
 import 'dart:io';
 
@@ -366,7 +367,10 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                       gradient: LinearGradient(
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
-                        colors: [Colors.orange.shade600, Colors.orange.shade800],
+                        colors: [
+                          Colors.orange.shade600,
+                          Colors.orange.shade800,
+                        ],
                       ),
                       boxShadow: [
                         BoxShadow(
@@ -382,52 +386,52 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                       size: 28,
                     ),
                   ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        folderName,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w600,
-                          color: isDark ? Colors.white : Colors.black,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          folderName,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                            color: isDark ? Colors.white : Colors.black,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 4),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withValues(alpha: 0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              '$videoCount videos',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w500,
-                                color: Colors.orange.shade600,
+                        const SizedBox(height: 4),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '$videoCount videos',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w500,
+                                  color: Colors.orange.shade600,
+                                ),
                               ),
                             ),
-                          ),
-                        ],
-                      ),
-                    ],
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
-      ),
       ),
     );
   }
@@ -457,9 +461,13 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     }
 
     return Scaffold(
-      backgroundColor: theme == ThemeMode.dark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F7),
+      backgroundColor: theme == ThemeMode.dark
+          ? const Color(0xFF0A0A0A)
+          : const Color(0xFFF5F5F7),
       appBar: AppBar(
-        backgroundColor: theme == ThemeMode.dark ? const Color(0xFF0A0A0A) : const Color(0xFFF5F5F7),
+        backgroundColor: theme == ThemeMode.dark
+            ? const Color(0xFF0A0A0A)
+            : const Color(0xFFF5F5F7),
         elevation: 0,
         centerTitle: false,
         title: Row(
@@ -473,7 +481,11 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                 ),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Icon(Icons.play_circle_filled, color: Colors.white, size: 24),
+              child: const Icon(
+                Icons.play_circle_filled,
+                color: Colors.white,
+                size: 24,
+              ),
             ),
             const SizedBox(width: 12),
             Flexible(
@@ -512,7 +524,9 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                 case 'settings':
                   Navigator.push(
                     context,
-                    MaterialPageRoute(builder: (context) => const SettingsScreen()),
+                    MaterialPageRoute(
+                      builder: (context) => const SettingsScreen(),
+                    ),
                   );
                   break;
               }
@@ -523,7 +537,9 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                 child: Row(
                   children: [
                     Icon(
-                      theme == ThemeMode.dark ? Icons.light_mode : Icons.dark_mode,
+                      theme == ThemeMode.dark
+                          ? Icons.light_mode
+                          : Icons.dark_mode,
                       size: 20,
                     ),
                     const SizedBox(width: 12),
@@ -608,19 +624,6 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                   Colors.blue,
                   () => _onChipTap('Privacy'),
                 ),
-                _buildChip(
-                  'Share',
-                  Icons.share_outlined,
-                  Colors.purple,
-                  () => _onChipTap('Share'),
-                ),
-                _buildChip(
-                  'Downloads',
-                  Icons.download_outlined,
-                  Colors.indigo,
-                  () => _onChipTap('Downloads'),
-                  isActive: _currentFilter == 'downloads',
-                ),
               ],
             ),
           ),
@@ -676,15 +679,14 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                                     const Color(0xFF1A1A1A),
                                     const Color(0xFF2A2A2A),
                                   ]
-                                : [
-                                    Colors.white,
-                                    Colors.grey[50]!,
-                                  ],
+                                : [Colors.white, Colors.grey[50]!],
                           ),
                           shape: BoxShape.circle,
                           boxShadow: [
                             BoxShadow(
-                              color: Colors.black.withValues(alpha: isDark ? 0.3 : 0.1),
+                              color: Colors.black.withValues(
+                                alpha: isDark ? 0.3 : 0.1,
+                              ),
                               blurRadius: 30,
                               offset: const Offset(0, 15),
                               spreadRadius: 5,
@@ -822,13 +824,10 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final video = displayVideos[index];
-                return _buildVideoListItem(video);
-              },
-              childCount: displayVideos.length,
-            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final video = displayVideos[index];
+              return _buildVideoListItem(video);
+            }, childCount: displayVideos.length),
           ),
         ),
       ],
@@ -844,7 +843,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
   }) {
     final theme = ref.watch(themeModeProvider);
     final isDark = theme == ThemeMode.dark;
-    
+
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       margin: const EdgeInsets.only(right: 8),
@@ -854,10 +853,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
           children: [
             Icon(icon, size: 18),
             const SizedBox(width: 8),
-            Text(
-              label,
-              style: const TextStyle(fontSize: 14),
-            ),
+            Text(label, style: const TextStyle(fontSize: 14)),
           ],
         ),
         selected: isActive,
@@ -877,9 +873,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
         elevation: isActive ? 4 : 0,
         pressElevation: 2,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
         avatar: isActive
             ? Container(
                 padding: const EdgeInsets.all(4),
@@ -980,14 +974,11 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           sliver: SliverList(
-            delegate: SliverChildBuilderDelegate(
-              (context, index) {
-                final folderName = _folderNames[index];
-                final videoCount = _foldersMap[folderName]?.length ?? 0;
-                return _buildFolderListItem(folderName, videoCount);
-              },
-              childCount: _folderNames.length,
-            ),
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final folderName = _folderNames[index];
+              final videoCount = _foldersMap[folderName]?.length ?? 0;
+              return _buildFolderListItem(folderName, videoCount);
+            }, childCount: _folderNames.length),
           ),
         ),
       ],
@@ -1187,9 +1178,64 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     );
   }
 
-  void _shareVideo(VideoFile video) {
-    // Implement share functionality
-    _showSuccessSnackBar('Share functionality coming soon!');
+  void _shareVideo(VideoFile video) async {
+    try {
+      final videoFile = File(video.path);
+
+      if (!await videoFile.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Video file not found'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Check file size before sharing (limit to 100MB for performance)
+      final fileSize = await videoFile.length();
+      const maxShareSize = 100 * 1024 * 1024; // 100MB
+
+      if (fileSize > maxShareSize) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Video file too large to share (max 100MB)'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Share the video file
+      await Share.shareXFiles(
+        [XFile(video.path)],
+        subject: 'Video from Parthi Play',
+        text: 'Check out this video: ${video.name}',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Video shared successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error sharing video: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error sharing video: ${e.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 }
 
@@ -1243,7 +1289,9 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
     }
 
     try {
-      final thumbnail = await ThumbnailService.generateThumbnail(widget.videoPath);
+      final thumbnail = await ThumbnailService.generateThumbnail(
+        widget.videoPath,
+      );
       if (mounted) {
         setState(() {
           _thumbnailPath = thumbnail;
@@ -1279,12 +1327,13 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
             : null,
         boxShadow: [
           BoxShadow(
-            color: (widget.videoType == MediaType.audio
-                    ? Colors.blue
-                    : (widget.videoType == MediaType.streaming
-                          ? Colors.purple
-                          : Colors.red))
-                .withValues(alpha: 0.4),
+            color:
+                (widget.videoType == MediaType.audio
+                        ? Colors.blue
+                        : (widget.videoType == MediaType.streaming
+                              ? Colors.purple
+                              : Colors.red))
+                    .withValues(alpha: 0.4),
             blurRadius: 12,
             offset: const Offset(0, 4),
           ),

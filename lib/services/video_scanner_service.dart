@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'file_browser_service.dart';
 import 'thumbnail_service.dart';
+import 'scan_directory_service.dart';
 import '../core/video_player_controller.dart';
 
 class VideoScannerService {
@@ -138,14 +139,16 @@ class VideoScannerService {
   }
 
   static Future<List<String>> _getAvailableDirectories() async {
-    final Set<String> directories = {};
-
     try {
+      // Use the new scan directory service to get all directories
+      return await ScanDirectoryService.getAllScanDirectories();
+    } catch (e) {
+      debugPrint('Error getting directories: $e');
+      // Fallback to basic directories
+      final Set<String> directories = {};
       if (Platform.isAndroid) {
-        // Primary external storage
         final extDir = await getExternalStorageDirectory();
         if (extDir != null) {
-          // Attempt to go up to root: /storage/emulated/0/Android/data/... -> /storage/emulated/0
           final path = extDir.path;
           final androidIndex = path.indexOf('/Android');
           if (androidIndex != -1) {
@@ -154,28 +157,9 @@ class VideoScannerService {
             directories.add(path);
           }
         }
-
-        // Add specific common folders if we can access them
-        // Note: On Android 11+, we might not be able to list /storage/emulated/0 directly
-        // without MANAGE_EXTERNAL_STORAGE.
-        // We add common paths explicitly for better scan targets.
-
-        final root = '/storage/emulated/0';
-        directories.add(root);
-        directories.add('$root/Download');
-        directories.add('$root/DCIM');
-        directories.add('$root/Movies');
-        directories.add('$root/Pictures');
-        directories.add('$root/WhatsApp/Media/WhatsApp Video');
-      } else if (Platform.isIOS) {
-        final docsDir = await getApplicationDocumentsDirectory();
-        directories.add(docsDir.path);
       }
-    } catch (e) {
-      debugPrint('Error getting directories: $e');
+      return directories.toList();
     }
-
-    return directories.toList();
   }
 
   /// Top-level function for isolate

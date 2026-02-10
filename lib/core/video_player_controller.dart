@@ -9,7 +9,6 @@ import 'package:floating/floating.dart';
 import '../widgets/subtitle_display_widget.dart';
 import '../services/system_controls_service.dart';
 import '../services/file_browser_service.dart';
-import '../services/file_browser_service.dart';
 import '../services/video_format_service.dart';
 import '../services/performance_service.dart';
 import '../services/playback_history_service.dart';
@@ -275,26 +274,25 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       try {
         if (player.platform is NativePlayer) {
-        if (player.platform is NativePlayer) {
           final nativePlayer = player.platform as NativePlayer;
-          
+
           Map<String, String> flags;
-          
+
           // Select Optimization Profile
           if (state.useHwDec) {
-             flags = PerformanceService.getHardwareDecoderFlags();
+            flags = PerformanceService.getHardwareDecoderFlags();
           } else {
-             // FORCE SOFTWARE OPTIMIZATIONS
-             flags = PerformanceService.getSoftwareDecoderFlags();
+            // FORCE SOFTWARE OPTIMIZATIONS
+            flags = PerformanceService.getSoftwareDecoderFlags();
           }
 
           // Apply all flags
           flags.forEach((key, value) {
-             nativePlayer.setProperty(key, value);
+            nativePlayer.setProperty(key, value);
           });
 
           // Common Optimizations
-          
+
           if (PerformanceService.shouldEnableInterpolation()) {
             nativePlayer.setProperty('interpolation', 'yes');
             nativePlayer.setProperty('tscale', 'oversample');
@@ -303,9 +301,12 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
             // Use bilinear scaling which is faster
             nativePlayer.setProperty('tscale', 'bilinear');
           }
-          
+
           nativePlayer.setProperty('cache', 'yes');
-          nativePlayer.setProperty('demuxer-max-bytes', PerformanceService.getOptimalDemuxerCache());
+          nativePlayer.setProperty(
+            'demuxer-max-bytes',
+            PerformanceService.getOptimalDemuxerCache(),
+          );
           nativePlayer.setProperty('demuxer-max-back-bytes', '16M');
         }
       } catch (e) {
@@ -314,113 +315,124 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       final videoController = VideoController(player);
 
-      Duration? _lastPosition;
-      DateTime? _lastPositionUpdateTime;
-      Timer? _positionThrottleTimer;
-      
+      Duration? lastPosition;
+      DateTime? lastPositionUpdateTime;
+      Timer? positionThrottleTimer;
+
       _subscriptions.add(
-        player.stream.position.listen(
-          (p) {
-            final now = DateTime.now();
-            final timeSinceLastUpdate = _lastPositionUpdateTime == null
-                ? const Duration(seconds: 1)
-                : now.difference(_lastPositionUpdateTime!);
-            
-            if (timeSinceLastUpdate.inMilliseconds > 250) {
-              _lastPositionUpdateTime = now;
-              _lastPosition = p;
-              state = state.copyWith(position: p);
-            } else {
-              _lastPosition = p;
-              _positionThrottleTimer?.cancel();
-              _positionThrottleTimer = Timer(const Duration(milliseconds: 250), () {
-                if (_lastPosition != null && _lastPositionUpdateTime != null) {
-                  final timeSinceLastUpdate = DateTime.now().difference(_lastPositionUpdateTime!);
-                  if (timeSinceLastUpdate.inMilliseconds >= 200) {
-                    _lastPositionUpdateTime = DateTime.now();
-                    state = state.copyWith(position: _lastPosition!);
-                    
-                    // Save position periodically (every 5 seconds approx, checked here)
-                    if (state.videoPath != null && 
-                        state.position.inSeconds % 5 == 0 && 
-                        state.position.inSeconds > 0) {
-                      PlaybackHistoryService.savePosition(state.videoPath!, state.position);
-                    }
+        player.stream.position.listen((p) {
+          final now = DateTime.now();
+          final timeSinceLastUpdate = lastPositionUpdateTime == null
+              ? const Duration(seconds: 1)
+              : now.difference(lastPositionUpdateTime!);
+
+          if (timeSinceLastUpdate.inMilliseconds > 250) {
+            lastPositionUpdateTime = now;
+            lastPosition = p;
+            positionThrottleTimer?.cancel();
+            positionThrottleTimer = Timer(
+              const Duration(milliseconds: 100),
+              () {
+                if (lastPosition != null) {
+                  if (lastPosition != state.position) {
+                    state = state.copyWith(position: lastPosition);
                   }
                 }
-              });
-            }
-          },
-        ),
-      );
-      
-      Duration? _lastDuration;
-      DateTime? _lastDurationUpdateTime;
-      _subscriptions.add(
-        player.stream.duration.listen(
-          (d) {
-            if (d != _lastDuration) {
-              _lastDuration = d;
-              final now = DateTime.now();
-              if (_lastDurationUpdateTime == null || 
-                  now.difference(_lastDurationUpdateTime!).inMilliseconds > 500) {
-                _lastDurationUpdateTime = now;
-                state = state.copyWith(duration: d);
+              },
+            );
+          } else {
+            lastPosition = p;
+            positionThrottleTimer?.cancel();
+            positionThrottleTimer = Timer(const Duration(milliseconds: 250), () {
+              if (lastPosition != null && lastPositionUpdateTime != null) {
+                final timeSinceLastUpdate = DateTime.now().difference(
+                  lastPositionUpdateTime!,
+                );
+                if (timeSinceLastUpdate.inMilliseconds >= 200) {
+                  lastPositionUpdateTime = DateTime.now();
+                  state = state.copyWith(position: lastPosition!);
+
+                  // Save position periodically (every 5 seconds approx, checked here)
+                  if (state.videoPath != null &&
+                      state.position.inSeconds % 5 == 0 &&
+                      state.position.inSeconds > 0) {
+                    PlaybackHistoryService.savePosition(
+                      state.videoPath!,
+                      state.position,
+                    );
+                  }
+                }
               }
-            }
-          },
-        ),
+            });
+          }
+        }),
       );
-      
-      DateTime? _lastBufferUpdateTime;
+
+      Duration? lastDuration;
+      DateTime? lastDurationUpdateTime;
       _subscriptions.add(
-        player.stream.buffer.listen(
-          (b) {
+        player.stream.duration.listen((d) {
+          if (d != lastDuration) {
+            lastDuration = d;
             final now = DateTime.now();
-            if (_lastBufferUpdateTime == null || 
-                now.difference(_lastBufferUpdateTime!).inMilliseconds > 500) {
-              _lastBufferUpdateTime = now;
-              state = state.copyWith(bufferDuration: b);
+            if (lastDurationUpdateTime == null ||
+                now.difference(lastDurationUpdateTime!).inMilliseconds > 500) {
+              lastDurationUpdateTime = now;
+              state = state.copyWith(duration: d);
             }
-          },
-        ),
+          }
+        }),
+      );
+
+      DateTime? lastBufferUpdateTime;
+      _subscriptions.add(
+        player.stream.buffer.listen((b) {
+          final now = DateTime.now();
+          if (lastBufferUpdateTime == null ||
+              now.difference(lastBufferUpdateTime!).inMilliseconds > 500) {
+            lastBufferUpdateTime = now;
+            state = state.copyWith(bufferDuration: b);
+          }
+        }),
       );
 
       _subscriptions.add(
         player.stream.completed.listen((completed) {
-           if (completed && state.videoPath != null) {
-             PlaybackHistoryService.clearPosition(state.videoPath!);
-           }
+          if (completed && state.videoPath != null) {
+            PlaybackHistoryService.clearPosition(state.videoPath!);
+          }
         }),
       );
-      
+
       _subscriptions.add(
         player.stream.playing.listen(
           (isPlaying) => state = state.copyWith(isPlaying: isPlaying),
         ),
       );
-      
-      double? _lastVolume;
+
+      double? lastVolume;
       _subscriptions.add(
         player.stream.volume.listen((v) {
-          if ((_lastVolume == null || (v - _lastVolume!).abs() > 1.0)) {
-            _lastVolume = v;
+          if ((lastVolume == null || (v - lastVolume!).abs() > 1.0)) {
+            lastVolume = v;
             state = state.copyWith(volume: v);
           }
         }),
       );
-      
+
       _subscriptions.add(
         player.stream.error.listen((e) {
           debugPrint('Player Error: $e');
           // Auto-fallback to Software Decoding if HW decoding fails
           if (state.useHwDec && !state.hasError) {
-             debugPrint('Hardware decoding failed, switching to Software decoding...');
-             // Disable HW decoding
-             state = state.copyWith(useHwDec: false);
-             // Retry initialization
-             initializeVideo(state.videoUrl, state.videoPath);
-             return;
+            debugPrint(
+              'Hardware decoding failed, switching to Software decoding...',
+            );
+            // Disable HW decoding
+            state = state.copyWith(useHwDec: false);
+            // Retry initialization
+            initializeVideo(state.videoUrl, state.videoPath);
+            return;
           }
 
           state = state.copyWith(
@@ -445,7 +457,7 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
       final audioTracks = <AudioTrackInfo>[];
       try {
         await Future.delayed(const Duration(milliseconds: 300));
-        
+
         int attempts = 0;
         const maxAttempts = 5;
         while (attempts < maxAttempts) {
@@ -544,14 +556,17 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       // Restore playback position if available
       if (videoPath != null) {
-        final savedPosition = await PlaybackHistoryService.getPosition(videoPath);
+        final savedPosition = await PlaybackHistoryService.getPosition(
+          videoPath,
+        );
         if (savedPosition.inSeconds > 5) {
-           // Resume if we have a significant saved position
-           // Also check if it's not near the end (allow 5s buffer)
-           if (state.duration.inSeconds == 0 || savedPosition < state.duration - const Duration(seconds: 5)) {
-             await player.seek(savedPosition);
-             // Show toast or snackbar logic could go here, but doing silent resume is standard
-           }
+          // Resume if we have a significant saved position
+          // Also check if it's not near the end (allow 5s buffer)
+          if (state.duration.inSeconds == 0 ||
+              savedPosition < state.duration - const Duration(seconds: 5)) {
+            await player.seek(savedPosition);
+            // Show toast or snackbar logic could go here, but doing silent resume is standard
+          }
         }
       }
     } catch (e, stackTrace) {
@@ -648,7 +663,7 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
   Future<void> setAudioTrack(int? index) async {
     if (state.player == null) return;
-    
+
     final tracks = state.player!.state.tracks.audio;
     if (index == null) {
       state = state.copyWith(audioTrackIndex: -1);
@@ -657,7 +672,7 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
       }
       return;
     }
-    
+
     if (index >= 0 && index < tracks.length) {
       await state.player!.setAudioTrack(tracks[index]);
       state = state.copyWith(audioTrackIndex: index);

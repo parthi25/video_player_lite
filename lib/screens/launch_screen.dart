@@ -17,7 +17,7 @@ class _LaunchScreenState extends State<LaunchScreen>
   void initState() {
     super.initState();
     _animationController = AnimationController(
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(milliseconds: 1200),
       vsync: this,
     );
 
@@ -31,10 +31,24 @@ class _LaunchScreenState extends State<LaunchScreen>
 
     _animationController.forward();
 
-    // Navigate to main screen after animation
-    Future.delayed(const Duration(milliseconds: 3000), () {
+    // Navigate to main screen after shorter delay
+    Future.delayed(const Duration(milliseconds: 1500), () {
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/main');
+        try {
+          Navigator.of(context).pushReplacementNamed('/main');
+        } catch (e) {
+          debugPrint('Navigation error: $e');
+          // Fallback: try to navigate after a short delay
+          Future.delayed(const Duration(milliseconds: 200), () {
+            if (mounted) {
+              try {
+                Navigator.of(context).pushReplacementNamed('/main');
+              } catch (e2) {
+                debugPrint('Fallback navigation also failed: $e2');
+              }
+            }
+          });
+        }
       }
     });
   }

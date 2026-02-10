@@ -40,15 +40,16 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
     super.initState();
     PerformanceService.initialize();
     PerformanceService.optimizeForVideoPlayback();
-    
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _videoController = ref.read(videoPlayerControllerProvider.notifier);
         if (widget.onBackPressed != null) {
-          ref.read(videoPlayerBackCallbackProvider.notifier).state = widget.onBackPressed;
+          ref.read(videoPlayerBackCallbackProvider.notifier).state =
+              widget.onBackPressed;
         }
         _initializeVideo();
-        
+
         final videoState = ref.read(videoPlayerControllerProvider);
         _applyOrientation(videoState.orientation);
       }
@@ -88,7 +89,7 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
       debugPrint('Video controller not initialized yet');
       return;
     }
-    
+
     try {
       final videoState = ref.read(videoPlayerControllerProvider);
 
@@ -161,7 +162,7 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
 
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) async {
+      onPopInvokedWithResult: (didPop, result) async {
         if (!didPop) {
           await _handleBack();
         }
@@ -173,130 +174,130 @@ class _NextVideoPlayerState extends ConsumerState<NextVideoPlayer> {
         child: Scaffold(
           backgroundColor: Colors.black,
           body: Stack(
-          children: [
-            if (isInitialized)
-              NextGestureDetector(
-                onSeek: (position) {
-                  ref
-                      .read(videoPlayerControllerProvider.notifier)
-                      .seekTo(position);
-                },
-                onVolumeChanged: (volume) {
-                  ref
-                      .read(videoPlayerControllerProvider.notifier)
-                      .setVolume(volume);
-                },
-                onBrightnessChanged: (brightness) async {
-                  try {
-                    await SystemControlsService.setBrightness(brightness);
-                  } catch (e) {
-                    debugPrint('Error setting brightness: $e');
-                  }
-                },
-                child: Container(
-                  color: Colors.black,
-                  width: double.infinity,
-                  height: double.infinity,
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      Center(
-                        child: Consumer(
-                          builder: (context, ref, child) {
-                            final currentRatio = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.aspectRatio,
-                              ),
-                            );
-                            final videoController = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.videoController,
-                              ),
-                            );
-
-                            if (videoController == null) {
-                              return const SizedBox.shrink();
-                            }
-
-                            Widget videoWidget = Video(
-                              controller: videoController,
-                              fit: BoxFit.contain,
-                              controls: NoVideoControls,
-                              width: double.infinity,
-                              height: double.infinity,
-                              fill: Colors.black,
-                              filterQuality: FilterQuality.high,
-                            );
-
-                            if (currentRatio > 0) {
-                              return AspectRatio(
-                                aspectRatio: currentRatio,
-                                child: videoWidget,
+            children: [
+              if (isInitialized)
+                NextGestureDetector(
+                  onSeek: (position) {
+                    ref
+                        .read(videoPlayerControllerProvider.notifier)
+                        .seekTo(position);
+                  },
+                  onVolumeChanged: (volume) {
+                    ref
+                        .read(videoPlayerControllerProvider.notifier)
+                        .setVolume(volume);
+                  },
+                  onBrightnessChanged: (brightness) async {
+                    try {
+                      await SystemControlsService.setBrightness(brightness);
+                    } catch (e) {
+                      debugPrint('Error setting brightness: $e');
+                    }
+                  },
+                  child: Container(
+                    color: Colors.black,
+                    width: double.infinity,
+                    height: double.infinity,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        Center(
+                          child: Consumer(
+                            builder: (context, ref, child) {
+                              final currentRatio = ref.watch(
+                                videoPlayerControllerProvider.select(
+                                  (s) => s.aspectRatio,
+                                ),
                               );
-                            }
-                            return videoWidget;
-                          },
-                        ),
-                      ),
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: Consumer(
-                          builder: (context, ref, child) {
-                            final isLoaded = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.isLoaded,
-                              ),
-                            );
-                            if (!isLoaded) return const SizedBox.shrink();
-                            return const NextPlayerControls();
-                          },
-                        ),
-                      ),
-                      Positioned(
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        child: Consumer(
-                          builder: (context, ref, child) {
-                            final position = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.position,
-                              ),
-                            );
-                            final subtitles = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.subtitles,
-                              ),
-                            );
-                            final subtitlePath = ref.watch(
-                              videoPlayerControllerProvider.select(
-                                (s) => s.subtitlePath,
-                              ),
-                            );
+                              final videoController = ref.watch(
+                                videoPlayerControllerProvider.select(
+                                  (s) => s.videoController,
+                                ),
+                              );
 
-                            if (subtitles.isEmpty || subtitlePath == null) {
-                              return const SizedBox.shrink();
-                            }
+                              if (videoController == null) {
+                                return const SizedBox.shrink();
+                              }
 
-                            return SubtitleDisplayWidget(
-                              currentPosition: position,
-                              subtitles: subtitles,
-                            );
-                          },
+                              Widget videoWidget = Video(
+                                controller: videoController,
+                                fit: BoxFit.contain,
+                                controls: NoVideoControls,
+                                width: double.infinity,
+                                height: double.infinity,
+                                fill: Colors.black,
+                                filterQuality: FilterQuality.high,
+                              );
+
+                              if (currentRatio > 0) {
+                                return AspectRatio(
+                                  aspectRatio: currentRatio,
+                                  child: videoWidget,
+                                );
+                              }
+                              return videoWidget;
+                            },
+                          ),
                         ),
-                      ),
-                    ],
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Consumer(
+                            builder: (context, ref, child) {
+                              final isLoaded = ref.watch(
+                                videoPlayerControllerProvider.select(
+                                  (s) => s.isLoaded,
+                                ),
+                              );
+                              if (!isLoaded) return const SizedBox.shrink();
+                              return const NextPlayerControls();
+                            },
+                          ),
+                        ),
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          child: Consumer(
+                            builder: (context, ref, child) {
+                              final position = ref.watch(
+                                videoPlayerControllerProvider.select(
+                                  (s) => s.position,
+                                ),
+                              );
+                              final subtitles = ref.watch(
+                                videoPlayerControllerProvider.select(
+                                  (s) => s.subtitles,
+                                ),
+                              );
+                              final subtitlePath = ref.watch(
+                                videoPlayerControllerProvider.select(
+                                  (s) => s.subtitlePath,
+                                ),
+                              );
+
+                              if (subtitles.isEmpty || subtitlePath == null) {
+                                return const SizedBox.shrink();
+                              }
+
+                              return SubtitleDisplayWidget(
+                                currentPosition: position,
+                                subtitles: subtitles,
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-            if (isLoading) _buildLoadingIndicator(),
-          ],
+              if (isLoading) _buildLoadingIndicator(),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
