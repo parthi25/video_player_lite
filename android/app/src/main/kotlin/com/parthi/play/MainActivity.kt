@@ -1,10 +1,9 @@
-package com.example.video_player_lite
+package com.parthi.play
 
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.media.AudioManager
-import android.os.Build
 import android.provider.Settings
-import android.view.WindowManager
 import androidx.annotation.NonNull
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,12 +12,49 @@ import io.flutter.plugin.common.MethodChannel
 class MainActivity : FlutterActivity() {
     private val SYSTEM_CHANNEL = "next_player/system_controls"
     private val CASTING_CHANNEL = "next_player/casting"
+    private val ORIENTATION_CHANNEL = "parthi_play/orientation"
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        
+
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            ORIENTATION_CHANNEL
+        ).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "setSensorLandscape" -> {
+                    requestedOrientation =
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    result.success(true)
+                }
+                "setSensorPortrait" -> {
+                    requestedOrientation =
+                        ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    result.success(true)
+                }
+                "setSensorAuto" -> {
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                    result.success(true)
+                }
+                "setFullSensor" -> {
+                    requestedOrientation =
+                        ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                    result.success(true)
+                }
+                "clear" -> {
+                    requestedOrientation =
+                        ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    result.success(true)
+                }
+                else -> result.notImplemented()
+            }
+        }
+
         // System Controls Channel
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_CHANNEL).setMethodCallHandler { call, result ->
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            SYSTEM_CHANNEL
+        ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "getBrightness" -> result.success(getBrightness())
                 "setBrightness" -> {
@@ -46,12 +82,14 @@ class MainActivity : FlutterActivity() {
         }
 
         // Casting Channel (Mock implementation for now)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CASTING_CHANNEL).setMethodCallHandler { call, result ->
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            CASTING_CHANNEL
+        ).setMethodCallHandler { call, result ->
             when (call.method) {
                 "initialize" -> result.success(true)
                 "isSupported" -> result.success(true)
                 "scanForDevices" -> {
-                    // Return a mock list of devices
                     val mockDevices = listOf(
                         mapOf(
                             "id" to "mock_tv_1",
@@ -92,7 +130,10 @@ class MainActivity : FlutterActivity() {
         return try {
             val layoutParams = window.attributes
             if (layoutParams.screenBrightness < 0) {
-                Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS).toFloat() / 255f
+                Settings.System.getInt(
+                    contentResolver,
+                    Settings.System.SCREEN_BRIGHTNESS
+                ).toFloat() / 255f
             } else {
                 layoutParams.screenBrightness
             }

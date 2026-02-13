@@ -99,11 +99,13 @@ class _FileBrowserWidgetState extends ConsumerState<FileBrowserWidget> {
     setState(() => isLoading = true);
     try {
       final dirs = await FileBrowserService.getVideoDirectories();
+      if (!mounted) return;
       setState(() {
         directories = dirs;
         isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -117,12 +119,14 @@ class _FileBrowserWidgetState extends ConsumerState<FileBrowserWidget> {
     setState(() => isLoading = true);
     try {
       final files = await FileBrowserService.getVideoFiles(directoryPath);
+      if (!mounted) return;
       setState(() {
         currentDirectory = directoryPath;
         videoFiles = files;
         isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => isLoading = false);
       if (mounted) {
         ScaffoldMessenger.of(

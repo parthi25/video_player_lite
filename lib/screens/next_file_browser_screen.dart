@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../services/file_browser_service.dart';
 
 class NextFileBrowserScreen extends StatefulWidget {
@@ -41,6 +42,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
 
     try {
       final hasPermission = await FileBrowserService.requestStoragePermission();
+      if (!mounted) return;
 
       if (hasPermission) {
         setState(() {
@@ -55,6 +57,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
         _showPermissionDeniedDialog();
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -66,6 +69,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
     try {
       final storageDirectories =
           await FileBrowserService.getStorageDirectories();
+      if (!mounted) return;
 
       if (storageDirectories.isNotEmpty) {
         setState(() {
@@ -78,6 +82,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
         });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -94,6 +99,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
       final videoFiles = await FileBrowserService.getVideoFilesInDirectory(
         path,
       );
+      if (!mounted) return;
       _sortVideoFiles(videoFiles);
       setState(() {
         _videoFiles = videoFiles;
@@ -101,6 +107,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
         _isLoading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -160,7 +167,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
             TextButton(
               onPressed: () async {
                 Navigator.of(context).pop();
-                // Open app settings
+                await openAppSettings();
               },
               child: const Text(
                 'Open Settings',
@@ -189,16 +196,24 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: colorScheme.surface,
         elevation: 0,
         title: Text(
           _currentPath.isEmpty ? 'Video Browser' : _currentPath.split('/').last,
-          style: const TextStyle(color: Colors.white, fontSize: 18),
+          style: TextStyle(
+            color: isDark ? Colors.white : Colors.black,
+            fontSize: 18,
+          ),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(
+          color: isDark ? Colors.white : Colors.black,
+        ),
         actions: [
           IconButton(
             onPressed: () {
@@ -208,11 +223,14 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
             },
             icon: Icon(
               _isGridView ? Icons.list : Icons.grid_view,
-              color: Colors.white,
+              color: isDark ? Colors.white : Colors.black,
             ),
           ),
           PopupMenuButton<String>(
-            icon: const Icon(Icons.sort, color: Colors.white),
+            icon: Icon(
+              Icons.sort,
+              color: isDark ? Colors.white : Colors.black,
+            ),
             onSelected: (value) {
               setState(() {
                 _sortBy = value;
@@ -283,6 +301,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
   }
 
   Widget _buildPermissionRequest() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32.0),
@@ -303,17 +322,17 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
               child: const Icon(Icons.folder_off, size: 60, color: Colors.red),
             ),
             const SizedBox(height: 24),
-            const Text(
+            Text(
               'Storage Permission Required',
               style: TextStyle(
-                color: Colors.white,
+                color: isDark ? Colors.white : Colors.black,
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Allow access to your device storage to browse and play video files.',
               style: TextStyle(color: Colors.grey, fontSize: 14),
               textAlign: TextAlign.center,
@@ -341,15 +360,16 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
   }
 
   Widget _buildSearchBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFE0E0E0),
         borderRadius: BorderRadius.circular(8),
       ),
       child: TextField(
         controller: _searchController,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: isDark ? Colors.white : Colors.black),
         decoration: InputDecoration(
           hintText: 'Search videos...',
           hintStyle: TextStyle(color: Colors.grey[400]),
@@ -373,11 +393,12 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
   }
 
   Widget _buildPathIndicator() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E1E),
+        color: isDark ? const Color(0xFF1E1E1E) : const Color(0xFFE0E0E0),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -397,6 +418,7 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
   }
 
   Widget _buildEmptyState() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -413,8 +435,8 @@ class _NextFileBrowserScreenState extends State<NextFileBrowserScreen> {
             _searchTerm.isNotEmpty
                 ? 'No videos found for "$_searchTerm"'
                 : 'No video files found',
-            style: const TextStyle(
-              color: Colors.grey,
+            style: TextStyle(
+              color: isDark ? Colors.grey : Colors.grey[700],
               fontSize: 18,
               fontWeight: FontWeight.w500,
             ),

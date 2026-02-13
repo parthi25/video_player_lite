@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
+import 'package:flutter/services.dart';
 import 'services/theme_service.dart';
-import 'screens/next_player_main_screen.dart';
+import 'services/vault_service.dart';
+import 'screens/parthi_play_main_screen.dart';
 import 'screens/launch_screen.dart';
 import 'screens/vault_auth_screen.dart';
 import 'screens/vault_setup_screen.dart';
@@ -15,6 +17,11 @@ import 'screens/next_file_browser_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  await SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
+    DeviceOrientation.portraitDown,
+  ]);
+
   try {
     // MediaKit.ensureInitialized() is synchronous, wrap in try-catch
     MediaKit.ensureInitialized();
@@ -23,14 +30,50 @@ void main() async {
     debugPrint('MediaKit initialization failed: $e');
   }
 
-  runApp(const ProviderScope(child: NextPlayerApp()));
+  // Cleanup any lingering vault playback temp files on app start.
+  VaultService.cleanupPlaybackTempFiles();
+
+  runApp(const ProviderScope(child: ParthiPlayApp()));
 }
 
-class NextPlayerApp extends ConsumerWidget {
-  const NextPlayerApp({super.key});
+class ParthiPlayApp extends ConsumerStatefulWidget {
+  const ParthiPlayApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ParthiPlayApp> createState() => _ParthiPlayAppState();
+}
+
+class _ParthiPlayAppState extends ConsumerState<ParthiPlayApp>
+    with WidgetsBindingObserver {
+  DateTime? _lastVaultCleanupAt;
+  static const Duration _vaultCleanupCooldown = Duration(minutes: 30);
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final now = DateTime.now();
+      if (_lastVaultCleanupAt == null ||
+          now.difference(_lastVaultCleanupAt!) > _vaultCleanupCooldown) {
+        VaultService.cleanupPlaybackTempFiles();
+        _lastVaultCleanupAt = now;
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
 
     return MaterialApp(
@@ -120,7 +163,7 @@ class NextPlayerApp extends ConsumerWidget {
       initialRoute: '/',
       routes: {
         '/': (context) => const LaunchScreen(),
-        '/main': (context) => const NextPlayerMainScreen(),
+        '/main': (context) => const ParthiPlayMainScreen(),
         '/vault-auth': (context) => const VaultAuthScreen(),
         '/vault-setup': (context) => const VaultSetupScreen(),
         '/vault': (context) => const VaultScreen(),

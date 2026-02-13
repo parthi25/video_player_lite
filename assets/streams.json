@@ -1,0 +1,27 @@
+[
+  {
+    "title": "Big Buck Bunny (Mux)",
+    "url": "https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8",
+    "isLive": false
+  },
+  {
+    "title": "Big Buck Bunny 480p (Mux)",
+    "url": "https://test-streams.mux.dev/x36xhzz/url_6/193039199_mp4_h264_aac_hq_7.m3u8",
+    "isLive": false
+  },
+  {
+    "title": "Tears of Steel (Mux)",
+    "url": "https://test-streams.mux.dev/tos_ismc/main.m3u8",
+    "isLive": false
+  },
+  {
+    "title": "Tears of Steel (Unified Streaming)",
+    "url": "https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.m3u8",
+    "isLive": false
+  },
+  {
+    "title": "Apple HLS Example (HEVC)",
+    "url": "https://devstreaming-cdn.apple.com/videos/streaming/examples/bipbop_adv_example_hevc/master.m3u8",
+    "isLive": false
+  }
+]

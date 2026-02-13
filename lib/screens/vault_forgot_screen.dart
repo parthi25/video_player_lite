@@ -38,6 +38,7 @@ class _VaultForgotScreenState extends State<VaultForgotScreen> {
 
   Future<void> _loadSecurityQuestions() async {
     final questions = await VaultService.getSecurityQuestions();
+    if (!mounted) return;
     if (questions != null && questions.isNotEmpty) {
       setState(() {
         _questions = questions;
@@ -53,9 +54,7 @@ class _VaultForgotScreenState extends State<VaultForgotScreen> {
       });
     } else {
       // No security questions set up
-      if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/vault-security-setup');
-      }
+      Navigator.of(context).pushReplacementNamed('/vault-security-setup');
     }
   }
 
@@ -83,36 +82,35 @@ class _VaultForgotScreenState extends State<VaultForgotScreen> {
     if (success) {
       HapticFeedback.heavyImpact();
 
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Password Reset'),
-            content: const Text(
-              'Your Main Password has been reset to: private123\n'
-              'Your Decoy Password has been reset to: decoy123\n\n'
-              'Please change these immediately after logging in.',
-            ),
-            backgroundColor: Colors.grey.shade900,
-            titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),
-            contentTextStyle: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop(); // Close dialog
-                  Navigator.of(
-                    context,
-                  ).pushReplacementNamed('/vault-auth'); // Go to login
-                },
-                child: const Text('OK', style: TextStyle(color: Colors.red)),
-              ),
-            ],
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Password Reset'),
+          content: const Text(
+            'Your Main Password has been reset to: private123\n'
+            'Your Decoy Password has been reset to: decoy123\n\n'
+            'Please change these immediately after logging in.',
           ),
-        );
-      }
+          backgroundColor: Colors.grey.shade900,
+          titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),
+          contentTextStyle: const TextStyle(
+            color: Colors.white70,
+            fontSize: 16,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog
+                Navigator.of(
+                  context,
+                ).pushReplacementNamed('/vault-auth'); // Go to login
+              },
+              child: const Text('OK', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
     } else {
       HapticFeedback.lightImpact();
 

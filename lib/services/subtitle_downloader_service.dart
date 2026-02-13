@@ -78,7 +78,7 @@ class SubtitleDownloadProgress {
 
 class SubtitleDownloaderService {
   static const String _opensubtitlesBaseUrl = 'https://rest.opensubtitles.org';
-  static const String _userAgent = 'NextPlayerFlutter v1.0';
+  static const String _userAgent = 'ParthiPlay v1.0';
   static StreamController<SubtitleDownloadProgress>? _progressController;
 
   static Stream<SubtitleDownloadProgress> get downloadProgressStream =>

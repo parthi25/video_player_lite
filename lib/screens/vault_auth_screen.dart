@@ -53,6 +53,14 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
         _fadeController.forward();
       }
     });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      final isSetup = await VaultService.isVaultSetup();
+      if (!mounted) return;
+      if (!isSetup) {
+        Navigator.of(context).pushReplacementNamed('/vault-setup');
+      }
+    });
   }
 
   @override
@@ -109,14 +117,21 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = colorScheme.surface;
+    final surfaceVariant = colorScheme.surfaceContainerHighest;
+    final onSurface = colorScheme.onSurface;
+    final onSurfaceVariant = colorScheme.onSurfaceVariant;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: surface,
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.black, Colors.grey.shade900],
+            colors: isDark ? [Colors.black, Colors.grey.shade900] : [surface, surfaceVariant],
           ),
         ),
         child: SafeArea(
@@ -155,12 +170,12 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
                     const SizedBox(height: 40),
 
                     // Title
-                    const Text(
+                    Text(
                       'Private Videos',
                       style: TextStyle(
                         fontSize: 32,
                         fontWeight: FontWeight.bold,
-                        color: Colors.white,
+                        color: onSurface,
                         letterSpacing: 1.2,
                       ),
                     ),
@@ -171,7 +186,7 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
                       'Enter password to access your videos',
                       style: TextStyle(
                         fontSize: 16,
-                        color: Colors.grey.shade400,
+                        color: onSurfaceVariant,
                       ),
                       textAlign: TextAlign.center,
                     ),
@@ -192,7 +207,9 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
                       },
                       child: Container(
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade900.withValues(alpha: 0.5),
+                          color: isDark
+                              ? Colors.grey.shade900.withValues(alpha: 0.5)
+                              : surfaceVariant,
                           borderRadius: BorderRadius.circular(16),
                           border: Border.all(
                             color: _showError
@@ -205,13 +222,10 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
                           controller: _passwordController,
                           focusNode: _passwordFocusNode,
                           obscureText: !_isPasswordVisible,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 18,
-                          ),
+                          style: TextStyle(color: onSurface, fontSize: 18),
                           decoration: InputDecoration(
                             hintText: 'Enter password',
-                            hintStyle: TextStyle(color: Colors.grey.shade500),
+                            hintStyle: TextStyle(color: onSurfaceVariant),
                             prefixIcon: const Icon(
                               Icons.lock_outline,
                               color: Colors.grey,
@@ -332,7 +346,7 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
                       child: Text(
                         'Forgot password?',
                         style: TextStyle(
-                          color: Colors.grey.shade400,
+                          color: onSurfaceVariant,
                           fontSize: 14,
                         ),
                       ),
@@ -363,17 +377,18 @@ class _VaultAuthScreenState extends State<VaultAuthScreen>
   }
 
   void _showHardResetDialog() {
+    final colorScheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
+        backgroundColor: colorScheme.surface,
+        title: Text(
           'Format Vault?',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: colorScheme.onSurface),
         ),
-        content: const Text(
+        content: Text(
           'This will PERMANENTLY delete all files inside the private folder and reset your password. This action cannot be undone.',
-          style: TextStyle(color: Colors.white70),
+          style: TextStyle(color: colorScheme.onSurfaceVariant),
         ),
         actions: [
           TextButton(

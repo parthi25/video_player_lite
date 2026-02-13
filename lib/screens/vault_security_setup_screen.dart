@@ -103,37 +103,37 @@ class _VaultSecuritySetupScreenState extends State<VaultSecuritySetupScreen> {
     if (success) {
       HapticFeedback.heavyImpact();
 
-      if (mounted) {
-        showDialog(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Security Questions Set'),
-            content: const Text(
-              'Your security questions have been set up successfully!\n\nYou can now use them to reset your password if needed.',
-            ),
-            backgroundColor: Colors.grey.shade900,
-            titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),
-            contentTextStyle: const TextStyle(
-              color: Colors.white70,
-              fontSize: 16,
-            ),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop(); // Close dialog
-                  Navigator.of(
-                    context,
-                  ).pushReplacementNamed('/vault'); // Go to vault
-                },
-                child: const Text('OK', style: TextStyle(color: Colors.red)),
-              ),
-            ],
+      if (!mounted) return;
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Security Questions Set'),
+          content: const Text(
+            'Your security questions have been set up successfully!\n\nYou can now use them to reset your password if needed.',
           ),
-        );
-      }
+          backgroundColor: Colors.grey.shade900,
+          titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),
+          contentTextStyle: const TextStyle(
+            color: Colors.white70,
+            fontSize: 16,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop(); // Close dialog
+                Navigator.of(
+                  context,
+                ).pushReplacementNamed('/vault'); // Go to vault
+              },
+              child: const Text('OK', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
     } else {
       HapticFeedback.lightImpact();
 
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _showError = true;

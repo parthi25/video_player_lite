@@ -4,11 +4,18 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'package:crypto/crypto.dart';
 import 'dart:convert';
-import 'package:media_kit/media_kit.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
 
 class ThumbnailService {
   static final Map<String, String> _thumbnailCache = {};
   static Directory? _thumbnailDir;
+  static const int _maxCacheSizeBytes = 200 * 1024 * 1024; // 200MB
+  static final List<String> _queue = [];
+  static bool _isProcessingQueue = false;
+  static Future<void>? _queueRunner;
+  static DateTime? _lastCleanupAt;
+  static const int _batchLimit = 60;
+  static const Duration _cleanupInterval = Duration(hours: 12);
 
   static Future<void> initialize() async {
     try {
@@ -17,6 +24,7 @@ class ThumbnailService {
       if (!await _thumbnailDir!.exists()) {
         await _thumbnailDir!.create(recursive: true);
       }
+      await _enforceCacheLimit();
     } catch (e) {
       debugPrint('Error initializing thumbnail service: $e');
     }
@@ -61,20 +69,20 @@ class ThumbnailService {
       final fileName = _getThumbnailFileName(videoPath);
       final thumbnailPath = path.join(_thumbnailDir!.path, fileName);
 
-      final player = Player();
-      try {
-        await player.open(Media(videoPath), play: false);
-        
-        await Future.delayed(const Duration(milliseconds: 500));
-        
-        final screenshot = await player.screenshot();
-        if (screenshot != null) {
-          await File(thumbnailPath).writeAsBytes(screenshot);
-          _thumbnailCache[videoPath] = thumbnailPath;
-          return thumbnailPath;
+      final generatedPath = await VideoThumbnail.thumbnailFile(
+        video: videoPath,
+        thumbnailPath: _thumbnailDir!.path,
+        imageFormat: ImageFormat.JPEG,
+        quality: 75,
+      );
+
+      if (generatedPath != null && await File(generatedPath).exists()) {
+        if (generatedPath != thumbnailPath) {
+          await File(generatedPath).rename(thumbnailPath);
         }
-      } finally {
-        await player.dispose();
+        _thumbnailCache[videoPath] = thumbnailPath;
+        await _enforceCacheLimit();
+        return thumbnailPath;
       }
 
       return null;
@@ -85,14 +93,12 @@ class ThumbnailService {
   }
 
   static Future<void> generateThumbnailsBatch(List<String> videoPaths) async {
-    for (final videoPath in videoPaths) {
-      try {
-        await generateThumbnail(videoPath);
-        await Future.delayed(const Duration(milliseconds: 100));
-      } catch (e) {
-        debugPrint('Error generating thumbnail for $videoPath: $e');
-      }
+    final limited = videoPaths.take(_batchLimit).toList();
+    for (final videoPath in limited) {
+      if (_queue.contains(videoPath)) continue;
+      _queue.add(videoPath);
     }
+    _runQueue();
   }
 
   static Future<void> clearCache() async {
@@ -121,4 +127,86 @@ class ThumbnailService {
       debugPrint('Error deleting thumbnail: $e');
     }
   }
+
+  static Future<void> _enforceCacheLimit() async {
+    if (_thumbnailDir == null) {
+      await initialize();
+    }
+    final dir = _thumbnailDir;
+    if (dir == null) return;
+    final now = DateTime.now();
+    if (_lastCleanupAt != null &&
+        now.difference(_lastCleanupAt!) < _cleanupInterval) {
+      return;
+    }
+    _lastCleanupAt = now;
+
+    final files = await dir
+        .list()
+        .where((entity) => entity is File)
+        .cast<File>()
+        .toList();
+    if (files.isEmpty) return;
+
+    final entries = <_ThumbnailEntry>[];
+    int totalSize = 0;
+    for (final file in files) {
+      try {
+        final stat = await file.stat();
+        totalSize += stat.size;
+        entries.add(
+          _ThumbnailEntry(file: file, size: stat.size, modified: stat.modified),
+        );
+      } catch (_) {}
+    }
+
+    if (totalSize <= _maxCacheSizeBytes) return;
+
+    entries.sort((a, b) => a.modified.compareTo(b.modified));
+    for (final entry in entries) {
+      if (totalSize <= _maxCacheSizeBytes) break;
+      try {
+        await entry.file.delete();
+        totalSize -= entry.size;
+      } catch (_) {}
+    }
+  }
+
+  static Future<void> _runQueue() {
+    if (_isProcessingQueue && _queueRunner != null) return _queueRunner!;
+    _queueRunner = _processQueue();
+    return _queueRunner!;
+  }
+
+  static Future<void> _processQueue() async {
+    if (_isProcessingQueue) return;
+    _isProcessingQueue = true;
+    try {
+      while (_queue.isNotEmpty) {
+        final next = _queue.removeAt(0);
+        try {
+          await generateThumbnail(next);
+        } catch (e) {
+          debugPrint('Error generating thumbnail for $next: $e');
+        }
+        await Future.delayed(const Duration(milliseconds: 80));
+      }
+    } finally {
+      _isProcessingQueue = false;
+      _queueRunner = null;
+      await _enforceCacheLimit();
+    }
+  }
+}
+
+class _ThumbnailEntry {
+  final File file;
+  final int size;
+  final DateTime modified;
+
+  const _ThumbnailEntry({
+    required this.file,
+    required this.size,
+    required this.modified,
+  });
 }

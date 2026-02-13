@@ -12,6 +12,7 @@ import '../services/file_browser_service.dart';
 import '../services/video_format_service.dart';
 import '../services/performance_service.dart';
 import '../services/playback_history_service.dart';
+import '../services/youtube_stream_service.dart';
 
 enum MediaType { video, audio, streaming, image }
 
@@ -106,6 +107,7 @@ class VideoPlayerState {
   final List<double> equalizerBands;
   final bool isEqualizerEnabled;
   final List<AudioTrackInfo> audioTracks;
+  final bool isSwitchingDecoder;
 
   const VideoPlayerState({
     this.player,
@@ -141,6 +143,7 @@ class VideoPlayerState {
     this.equalizerBands = const [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
     this.isEqualizerEnabled = false,
     this.audioTracks = const [],
+    this.isSwitchingDecoder = false,
   });
 
   VideoPlayerState copyWith({
@@ -177,6 +180,7 @@ class VideoPlayerState {
     List<double>? equalizerBands,
     bool? isEqualizerEnabled,
     List<AudioTrackInfo>? audioTracks,
+    bool? isSwitchingDecoder,
   }) {
     return VideoPlayerState(
       player: player ?? this.player,
@@ -212,6 +216,7 @@ class VideoPlayerState {
       equalizerBands: equalizerBands ?? this.equalizerBands,
       isEqualizerEnabled: isEqualizerEnabled ?? this.isEqualizerEnabled,
       audioTracks: audioTracks ?? this.audioTracks,
+      isSwitchingDecoder: isSwitchingDecoder ?? this.isSwitchingDecoder,
     );
   }
 }
@@ -219,6 +224,15 @@ class VideoPlayerState {
 class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
   final Floating _floating = Floating();
   final List<StreamSubscription> _subscriptions = [];
+  Timer? _positionThrottleTimer;
+  Timer? _audioTrackPoller;
+  Timer? _statePoller;
+  Duration? _pendingPosition;
+  DateTime? _lastPositionUpdateTime;
+  static const int _uiUpdateIntervalMs = 150;
+  bool _isInitializing = false;
+  String? _lastSourceKey;
+  int _initRetryCount = 0;
 
   VideoPlayerControllerNotifier() : super(const VideoPlayerState()) {
     _initPipListener();
@@ -231,6 +245,14 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
       await s.cancel();
     }
     _subscriptions.clear();
+    _positionThrottleTimer?.cancel();
+    _positionThrottleTimer = null;
+    _pendingPosition = null;
+    _lastPositionUpdateTime = null;
+    _audioTrackPoller?.cancel();
+    _audioTrackPoller = null;
+    _statePoller?.cancel();
+    _statePoller = null;
 
     if (state.player != null) {
       await state.player!.dispose();
@@ -244,12 +266,59 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     ]);
   }
 
-  void reset() async {
+  Future<void> reset() async {
     await _disposePlayer();
     state = const VideoPlayerState();
   }
 
-  Future<void> initializeVideo(String? videoUrl, String? videoPath) async {
+  void applyDynamicPerformance({
+    required bool frameDrop,
+    required bool skipLoopFilter,
+  }) {
+    PerformanceService.setDynamicPerformance(
+      frameDrop: frameDrop,
+      skipLoopFilter: skipLoopFilter,
+    );
+
+    if (state.player?.platform is NativePlayer) {
+      final nativePlayer = state.player!.platform as NativePlayer;
+      nativePlayer.setProperty('framedrop', frameDrop ? 'vo' : 'no');
+      nativePlayer.setProperty(
+        'vd-lavc-skiploopfilter',
+        skipLoopFilter ? 'all' : 'no',
+      );
+    }
+  }
+
+  void applyHdrToneMapping(bool enable) {
+    if (state.player?.platform is! NativePlayer) return;
+    final nativePlayer = state.player!.platform as NativePlayer;
+    if (enable) {
+      nativePlayer.setProperty('tone-mapping', 'mobius');
+      nativePlayer.setProperty('hdr-compute-peak', 'yes');
+      nativePlayer.setProperty('target-trc', 'bt.1886');
+      nativePlayer.setProperty('target-prim', 'bt.709');
+    } else {
+      nativePlayer.setProperty('tone-mapping', 'no');
+      nativePlayer.setProperty('hdr-compute-peak', 'no');
+      nativePlayer.setProperty('target-trc', 'auto');
+      nativePlayer.setProperty('target-prim', 'auto');
+    }
+  }
+
+  Future<void> initializeVideo(
+    String? videoUrl,
+    String? videoPath, {
+    bool autoPlay = false,
+  }) async {
+    if (_isInitializing) return;
+    _isInitializing = true;
+    final sourceKey =
+        (videoUrl != null && videoUrl.isNotEmpty) ? 'url:$videoUrl' : 'path:$videoPath';
+    if (_lastSourceKey != sourceKey) {
+      _lastSourceKey = sourceKey;
+      _initRetryCount = 0;
+    }
     try {
       await _disposePlayer();
 
@@ -308,6 +377,8 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
             PerformanceService.getOptimalDemuxerCache(),
           );
           nativePlayer.setProperty('demuxer-max-back-bytes', '16M');
+
+          applyHdrToneMapping(PerformanceService.isHdrToneMappingEnabled);
         }
       } catch (e) {
         debugPrint('Hardware decoding setup error: $e');
@@ -315,56 +386,39 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       final videoController = VideoController(player);
 
-      Duration? lastPosition;
-      DateTime? lastPositionUpdateTime;
-      Timer? positionThrottleTimer;
-
       _subscriptions.add(
         player.stream.position.listen((p) {
           final now = DateTime.now();
-          final timeSinceLastUpdate = lastPositionUpdateTime == null
-              ? const Duration(seconds: 1)
-              : now.difference(lastPositionUpdateTime!);
+          final lastUpdate = _lastPositionUpdateTime;
+          final elapsedMs = lastUpdate == null
+              ? 9999
+              : now.difference(lastUpdate).inMilliseconds;
 
-          if (timeSinceLastUpdate.inMilliseconds > 250) {
-            lastPositionUpdateTime = now;
-            lastPosition = p;
-            positionThrottleTimer?.cancel();
-            positionThrottleTimer = Timer(
-              const Duration(milliseconds: 100),
+          _pendingPosition = p;
+
+          if (elapsedMs >= _uiUpdateIntervalMs) {
+            _lastPositionUpdateTime = now;
+            if (_pendingPosition != null &&
+                _pendingPosition != state.position) {
+              state = state.copyWith(position: _pendingPosition!);
+            }
+            _pendingPosition = null;
+          } else {
+            _positionThrottleTimer?.cancel();
+            _positionThrottleTimer = Timer(
+              Duration(milliseconds: _uiUpdateIntervalMs - elapsedMs),
               () {
-                if (lastPosition != null) {
-                  if (lastPosition != state.position) {
-                    state = state.copyWith(position: lastPosition);
-                  }
+                if (_pendingPosition == null) return;
+                _lastPositionUpdateTime = DateTime.now();
+                if (_pendingPosition != state.position) {
+                  state = state.copyWith(position: _pendingPosition!);
                 }
+                _pendingPosition = null;
               },
             );
-          } else {
-            lastPosition = p;
-            positionThrottleTimer?.cancel();
-            positionThrottleTimer = Timer(const Duration(milliseconds: 250), () {
-              if (lastPosition != null && lastPositionUpdateTime != null) {
-                final timeSinceLastUpdate = DateTime.now().difference(
-                  lastPositionUpdateTime!,
-                );
-                if (timeSinceLastUpdate.inMilliseconds >= 200) {
-                  lastPositionUpdateTime = DateTime.now();
-                  state = state.copyWith(position: lastPosition!);
-
-                  // Save position periodically (every 5 seconds approx, checked here)
-                  if (state.videoPath != null &&
-                      state.position.inSeconds % 5 == 0 &&
-                      state.position.inSeconds > 0) {
-                    PlaybackHistoryService.savePosition(
-                      state.videoPath!,
-                      state.position,
-                    );
-                  }
-                }
-              }
-            });
           }
+
+          // Save position on pause/stop only (avoid playback stutter)
         }),
       );
 
@@ -406,7 +460,15 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       _subscriptions.add(
         player.stream.playing.listen(
-          (isPlaying) => state = state.copyWith(isPlaying: isPlaying),
+          (isPlaying) {
+            state = state.copyWith(isPlaying: isPlaying);
+            if (!isPlaying && state.videoPath != null) {
+              PlaybackHistoryService.savePosition(
+                state.videoPath!,
+                state.position,
+              );
+            }
+          },
         ),
       );
 
@@ -445,114 +507,33 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       Media? media;
       if (videoUrl != null && videoUrl.isNotEmpty) {
-        media = Media(videoUrl);
+        final resolvedUrl = await YoutubeStreamService.resolveIfNeeded(
+          videoUrl,
+        );
+        media = Media(resolvedUrl);
       } else if (videoPath != null && videoPath.isNotEmpty) {
         media = Media(videoPath);
       }
 
       if (media == null) throw Exception('No valid media source');
 
-      await player.open(media, play: false);
-
-      final audioTracks = <AudioTrackInfo>[];
-      try {
-        await Future.delayed(const Duration(milliseconds: 300));
-
-        int attempts = 0;
-        const maxAttempts = 5;
-        while (attempts < maxAttempts) {
-          final tracks = player.state.tracks.audio;
-          if (tracks.isNotEmpty) {
-            for (int i = 0; i < tracks.length; i++) {
-              final track = tracks[i];
-              String? codecInfo = track.codec;
-              String? titleInfo = track.title;
-
-              if (codecInfo == null || codecInfo.isEmpty) {
-                if (track.channels != null) {
-                  final channels = track.channels.toString();
-                  if (channels.contains('2')) {
-                    codecInfo = 'STEREO';
-                  } else if (channels.contains('6')) {
-                    codecInfo = '5.1';
-                  } else if (channels.contains('8')) {
-                    codecInfo = '7.1';
-                  }
-                }
-              }
-
-              audioTracks.add(
-                AudioTrackInfo(
-                  id: i,
-                  title: titleInfo?.isNotEmpty == true
-                      ? titleInfo!
-                      : (codecInfo?.isNotEmpty == true
-                            ? 'Audio $codecInfo'
-                            : 'Track ${i + 1}'),
-                  language: track.language ?? 'Unknown',
-                  codec: codecInfo,
-                  channels: track.channels != null
-                      ? int.tryParse(track.channels.toString())
-                      : null,
-                ),
-              );
-            }
-            break;
-          }
-          attempts++;
-          if (attempts < maxAttempts) {
-            await Future.delayed(Duration(milliseconds: 200 * attempts));
-          }
-        }
-
-        if (audioTracks.isEmpty) {
-          audioTracks.add(
-            AudioTrackInfo(
-              id: 0,
-              title: 'Default Audio',
-              language: 'Unknown',
-              codec: null,
-              channels: null,
-            ),
-          );
-        }
-      } catch (e) {
-        debugPrint('Error extracting audio tracks: $e');
-        if (audioTracks.isEmpty) {
-          audioTracks.add(
-            AudioTrackInfo(
-              id: 0,
-              title: 'Default Audio',
-              language: 'Unknown',
-              codec: null,
-              channels: null,
-            ),
-          );
-        }
-      }
-
-      int initialTrackIndex = -1;
-      if (audioTracks.isNotEmpty && player.state.tracks.audio.isNotEmpty) {
-        try {
-          final currentTrack = player.state.track.audio;
-          final trackIndex = player.state.tracks.audio.indexOf(currentTrack);
-          if (trackIndex >= 0 && trackIndex < audioTracks.length) {
-            initialTrackIndex = trackIndex;
-          } else {
-            initialTrackIndex = 0;
-          }
-        } catch (e) {
-          initialTrackIndex = 0;
-        }
-      }
+      await player.open(media, play: false).timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          throw Exception('Connection timed out. Please try again.');
+        },
+      );
 
       state = state.copyWith(
         player: player,
         videoController: videoController,
         isInitialized: true,
         isLoaded: true,
-        audioTrackIndex: initialTrackIndex,
+        isSwitchingDecoder: false,
       );
+
+      _startStatePolling(player);
+      _startAudioTrackPolling(player);
 
       // Restore playback position if available
       if (videoPath != null) {
@@ -569,7 +550,27 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
           }
         }
       }
+
+      if (autoPlay) {
+        await player.play();
+      }
+    } on YoutubeStreamException catch (e) {
+      debugPrint('YouTube stream error: $e');
+      await _disposePlayer();
+      state = state.copyWith(
+        isInitialized: false,
+        hasError: true,
+        errorMessage: e.message,
+        isSwitchingDecoder: false,
+      );
     } catch (e, stackTrace) {
+      if (e.toString().contains('Connection timed out') &&
+          _initRetryCount < 1) {
+        _initRetryCount += 1;
+        _isInitializing = false;
+        await initializeVideo(videoUrl, videoPath, autoPlay: autoPlay);
+        return;
+      }
       debugPrint('Error initializing video: $e');
       debugPrint('Stack trace: $stackTrace');
       await _disposePlayer();
@@ -577,15 +578,136 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         isInitialized: false,
         hasError: true,
         errorMessage: 'Failed to load video: ${e.toString()}',
+        isSwitchingDecoder: false,
       );
+    } finally {
+      _isInitializing = false;
     }
+  }
+
+  void _startStatePolling(Player player) {
+    _statePoller?.cancel();
+    _statePoller = Timer.periodic(const Duration(milliseconds: 500), (_) {
+      final current = player.state;
+      if (current.position != state.position) {
+        state = state.copyWith(position: current.position);
+      }
+      if (current.duration != state.duration) {
+        state = state.copyWith(duration: current.duration);
+      }
+      if (current.playing != state.isPlaying) {
+        state = state.copyWith(isPlaying: current.playing);
+      }
+    });
   }
 
   Future<void> play() async => await state.player?.play();
   Future<void> pause() async => await state.player?.pause();
   Future<void> togglePlayPause() async => await state.player?.playOrPause();
-  Future<void> seekTo(Duration position) async =>
-      await state.player?.seek(position);
+  Future<void> seekTo(Duration position) async {
+    Duration safePosition = position;
+    if (safePosition.isNegative) {
+      safePosition = Duration.zero;
+    }
+    final duration = state.duration;
+    if (duration.inMilliseconds > 0 && safePosition > duration) {
+      safePosition = duration;
+    }
+    await state.player?.seek(safePosition);
+  }
+
+  void _startAudioTrackPolling(Player player) {
+    _audioTrackPoller?.cancel();
+    int attempts = 0;
+    const maxAttempts = 20;
+
+    void updateTracks() {
+      final tracks = player.state.tracks.audio;
+      if (tracks.isEmpty) return;
+
+      final audioTracks = _buildAudioTrackInfo(tracks);
+      final currentTrack = player.state.track.audio;
+      int initialTrackIndex = -1;
+      if (tracks.isNotEmpty) {
+        try {
+          final trackIndex = tracks.indexOf(currentTrack);
+          initialTrackIndex = trackIndex >= 0 ? trackIndex : 0;
+        } catch (_) {
+          initialTrackIndex = 0;
+        }
+      }
+
+      state = state.copyWith(
+        audioTracks: audioTracks,
+        audioTrackIndex: initialTrackIndex,
+      );
+    }
+
+    _audioTrackPoller = Timer.periodic(const Duration(milliseconds: 250), (
+      timer,
+    ) {
+      attempts++;
+      updateTracks();
+      if (state.audioTracks.isNotEmpty || attempts >= maxAttempts) {
+        timer.cancel();
+      }
+    });
+
+    // Initial immediate attempt.
+    updateTracks();
+  }
+
+  List<AudioTrackInfo> _buildAudioTrackInfo(List<dynamic> tracks) {
+    final audioTracks = <AudioTrackInfo>[];
+    for (int i = 0; i < tracks.length; i++) {
+      final track = tracks[i];
+      String? codecInfo = track.codec;
+      String? titleInfo = track.title;
+
+      if (codecInfo == null || codecInfo.isEmpty) {
+        if (track.channels != null) {
+          final channels = track.channels.toString();
+          if (channels.contains('2')) {
+            codecInfo = 'STEREO';
+          } else if (channels.contains('6')) {
+            codecInfo = '5.1';
+          } else if (channels.contains('8')) {
+            codecInfo = '7.1';
+          }
+        }
+      }
+
+      audioTracks.add(
+        AudioTrackInfo(
+          id: i,
+          title: titleInfo?.isNotEmpty == true
+              ? titleInfo!
+              : (codecInfo?.isNotEmpty == true
+                    ? 'Audio $codecInfo'
+                    : 'Track ${i + 1}'),
+          language: track.language ?? 'Unknown',
+          codec: codecInfo,
+          channels: track.channels != null
+              ? int.tryParse(track.channels.toString())
+              : null,
+        ),
+      );
+    }
+
+    if (audioTracks.isEmpty) {
+      audioTracks.add(
+        const AudioTrackInfo(
+          id: 0,
+          title: 'Default Audio',
+          language: 'Unknown',
+          codec: null,
+          channels: null,
+        ),
+      );
+    }
+
+    return audioTracks;
+  }
 
   Future<void> setVolume(double volume) async {
     final v = (volume * 100).clamp(0.0, 200.0);
@@ -604,6 +726,16 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
   void toggleControls() =>
       state = state.copyWith(showControls: !state.showControls);
+  void setControlsVisible(bool visible) {
+    if (state.showControls != visible) {
+      state = state.copyWith(showControls: visible);
+    }
+  }
+  void setInPip(bool value) {
+    if (state.isInPip != value) {
+      state = state.copyWith(isInPip: value);
+    }
+  }
   void toggleLock() => state = state.copyWith(isLocked: !state.isLocked);
   void toggleFullscreen() =>
       state = state.copyWith(isFullscreen: !state.isFullscreen);
@@ -712,7 +844,8 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
   Future<void> enterPIP() async {
     try {
-      if (await _floating.isPipAvailable) {
+      final pipAvailable = await _floating.isPipAvailable;
+      if (pipAvailable == true) {
         if (await _floating.enable(
               ImmediatePiP(aspectRatio: const Rational.landscape()),
             ) ==
@@ -734,10 +867,30 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     }
   }
 
-  void toggleDecoder() {
-    state = state.copyWith(useHwDec: !state.useHwDec);
-    if (state.videoPath != null || state.videoUrl != null) {
-      initializeVideo(state.videoUrl, state.videoPath);
+  void toggleDecoder() async {
+    if (state.videoPath == null && state.videoUrl == null) return;
+    final currentPosition = state.position;
+    final wasPlaying = state.isPlaying;
+    state = state.copyWith(
+      useHwDec: !state.useHwDec,
+      isLoaded: false,
+      isInitialized: false,
+      isSwitchingDecoder: true,
+    );
+    try {
+      await initializeVideo(
+        state.videoUrl,
+        state.videoPath,
+        autoPlay: false,
+      );
+    } finally {
+      state = state.copyWith(isSwitchingDecoder: false);
+    }
+    if (currentPosition.inMilliseconds > 0) {
+      await seekTo(currentPosition);
+    }
+    if (wasPlaying) {
+      await play();
     }
   }
 

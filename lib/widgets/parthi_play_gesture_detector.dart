@@ -2,15 +2,16 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/video_player_controller.dart';
+import '../services/settings_service.dart';
 import '../services/system_controls_service.dart';
 
-class NextGestureDetector extends ConsumerStatefulWidget {
+class ParthiPlayGestureDetector extends ConsumerStatefulWidget {
   final Widget child;
   final Function(Duration) onSeek;
   final Function(double) onVolumeChanged;
   final Function(double) onBrightnessChanged;
 
-  const NextGestureDetector({
+  const ParthiPlayGestureDetector({
     super.key,
     required this.child,
     required this.onSeek,
@@ -19,17 +20,27 @@ class NextGestureDetector extends ConsumerStatefulWidget {
   });
 
   @override
-  ConsumerState<NextGestureDetector> createState() =>
-      _NextGestureDetectorState();
+  ConsumerState<ParthiPlayGestureDetector> createState() =>
+      _ParthiPlayGestureDetectorState();
 }
 
-class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
+class _ParthiPlayGestureDetectorState
+    extends ConsumerState<ParthiPlayGestureDetector> {
   double _dragStartX = 0;
   double _dragStartY = 0;
   Duration _dragStartPosition = Duration.zero;
   bool _isSeeking = false;
   bool _isAdjustingVolume = false;
   bool _isAdjustingBrightness = false;
+  bool _wasPlayingBeforeHold = false;
+  double _prevPlaybackSpeed = 1.0;
+  Timer? _rewindTimer;
+  static const Duration _rewindInterval = Duration(milliseconds: 250);
+  Duration _rewindStep = const Duration(milliseconds: 500);
+  StreamSubscription<void>? _settingsSubscription;
+  double _forwardHoldSpeed = 2.0;
+  double _rewindHoldSpeed = 2.0;
+  TapDownDetails? _doubleTapDetails;
 
   // Initial values for gestures
   double _startVolume = 0.5;
@@ -47,6 +58,35 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
   bool _showSkipForward = false;
   bool _showSkipBack = false;
   Timer? _skipTimer;
+  int _skipSeconds = 10;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadGestureSettings();
+    _settingsSubscription = SettingsService.changes.listen((_) {
+      _loadGestureSettings();
+    });
+  }
+
+  Future<void> _loadGestureSettings() async {
+    final skipSeconds = await SettingsService.getDoubleTapSeekSeconds();
+    final forwardHoldSpeed = await SettingsService.getHoldForwardSpeed();
+    final rewindHoldSpeed = await SettingsService.getHoldRewindSpeed();
+    if (!mounted) return;
+    setState(() {
+      _skipSeconds = skipSeconds;
+      _forwardHoldSpeed = forwardHoldSpeed;
+      _rewindHoldSpeed = rewindHoldSpeed;
+      _rewindStep = Duration(
+        milliseconds:
+            (_rewindInterval.inMilliseconds * _rewindHoldSpeed).round().clamp(
+                  100,
+                  2000,
+                ),
+      );
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -54,38 +94,57 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
     // final videoState = ref.watch(videoPlayerControllerProvider);
 
     return GestureDetector(
+      behavior: HitTestBehavior.translucent,
       onTap: () {
         final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
-        // Toggle controls visibility
         final videoController = ref.read(
           videoPlayerControllerProvider.notifier,
         );
+        debugPrint('[gesture] tap -> toggle controls');
         videoController.toggleControls();
       },
       onDoubleTapDown: (details) {
         final videoState = ref.read(videoPlayerControllerProvider);
         if (videoState.isLocked) return;
-        final screenWidth = MediaQuery.of(context).size.width;
+        debugPrint(
+          '[gesture] doubleTapDown x=${details.localPosition.dx.toStringAsFixed(1)} y=${details.localPosition.dy.toStringAsFixed(1)}',
+        );
+        _doubleTapDetails = details;
+      },
+      onDoubleTap: () {
+        final videoState = ref.read(videoPlayerControllerProvider);
+        if (videoState.isLocked) return;
+        final details = _doubleTapDetails;
+        if (details == null) return;
+
+        final box = context.findRenderObject() as RenderBox?;
+        final width = box?.size.width ?? MediaQuery.of(context).size.width;
+        final tapX = details.localPosition.dx;
+
         final videoController = ref.read(
           videoPlayerControllerProvider.notifier,
         );
         final videoStateCurrent = ref.read(videoPlayerControllerProvider);
 
-        if (details.globalPosition.dx < screenWidth / 3) {
-          // Left side -> Rewind
+        if (tapX < width / 3) {
+          debugPrint('[gesture] doubleTap -> left seek -${_skipSeconds}s');
           final newPosition =
-              videoStateCurrent.position - const Duration(seconds: 10);
+              videoStateCurrent.position - Duration(seconds: _skipSeconds);
           videoController.seekTo(newPosition);
           _showSkipIndicator(false);
-        } else if (details.globalPosition.dx > screenWidth * 2 / 3) {
-          // Right side -> Fast Forward
-          final newPosition =
-              videoStateCurrent.position + const Duration(seconds: 10);
+        } else if (tapX > width * 2 / 3) {
+          debugPrint('[gesture] doubleTap -> right seek +${_skipSeconds}s');
+          final duration = videoStateCurrent.duration;
+          Duration newPosition =
+              videoStateCurrent.position + Duration(seconds: _skipSeconds);
+          if (duration.inMilliseconds > 0 && newPosition > duration) {
+            newPosition = duration;
+          }
           videoController.seekTo(newPosition);
           _showSkipIndicator(true);
         } else {
-          // Center -> Toggle play/pause (original behavior)
+          debugPrint('[gesture] doubleTap -> center play/pause');
           videoController.togglePlayPause();
         }
       },
@@ -97,17 +156,34 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
           videoPlayerControllerProvider.notifier,
         );
 
+        _wasPlayingBeforeHold = videoState.isPlaying;
+        _prevPlaybackSpeed = videoState.playbackSpeed;
+
         if (details.globalPosition.dx > screenWidth / 2) {
-          // Right side long press -> 2x Speed Forward
-          videoController.setPlaybackSpeed(2.0);
+          // Right side long press -> Speed Forward
+          debugPrint(
+            '[gesture] longPressStart -> forward ${_forwardHoldSpeed.toStringAsFixed(1)}x',
+          );
+          videoController.setPlaybackSpeed(_forwardHoldSpeed);
+          if (!_wasPlayingBeforeHold) {
+            videoController.play();
+          }
           setState(() {
             _showSpeedIndicator = true;
             _isForwardSpeed = true;
           });
         } else {
-          // Left side long press -> 2x Speed Backward (Rewind)
-          // media_kit supports negative rates for reverse playback
-          videoController.setPlaybackSpeed(-2.0);
+          // Left side long press -> Rewind (safe seek loop)
+          debugPrint(
+            '[gesture] longPressStart -> rewind ${_rewindHoldSpeed.toStringAsFixed(1)}x',
+          );
+          videoController.pause();
+          _rewindTimer?.cancel();
+          _rewindTimer = Timer.periodic(_rewindInterval, (_) {
+            final currentState = ref.read(videoPlayerControllerProvider);
+            final newPosition = currentState.position - _rewindStep;
+            videoController.seekTo(newPosition);
+          });
           setState(() {
             _showSpeedIndicator = true;
             _isForwardSpeed = false;
@@ -115,9 +191,11 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
         }
       },
       onLongPressEnd: (details) {
+        debugPrint('[gesture] longPressEnd');
         _endSpeedup();
       },
       onLongPressUp: () {
+        debugPrint('[gesture] longPressUp');
         _endSpeedup();
       },
       onHorizontalDragStart: (details) {
@@ -240,7 +318,9 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
                     ),
                     const SizedBox(width: 8),
                     Text(
-                      _isForwardSpeed ? '2.0x Playing' : '2.0x Rewinding',
+                      _isForwardSpeed
+                          ? '${_forwardHoldSpeed.toStringAsFixed(1)}x Playing'
+                          : '${_rewindHoldSpeed.toStringAsFixed(1)}x Rewinding',
                       style: const TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -287,7 +367,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
                   children: [
                     Icon(Icons.fast_rewind, color: Colors.white, size: 48),
                     Text(
-                      "-10s",
+                      "-${_skipSeconds}s",
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -309,7 +389,7 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
                   children: [
                     Icon(Icons.fast_forward, color: Colors.white, size: 48),
                     Text(
-                      "+10s",
+                      "+${_skipSeconds}s",
                       style: TextStyle(
                         color: Colors.white,
                         fontWeight: FontWeight.bold,
@@ -463,11 +543,25 @@ class _NextGestureDetectorState extends ConsumerState<NextGestureDetector> {
   void _endSpeedup() {
     if (_showSpeedIndicator) {
       final videoController = ref.read(videoPlayerControllerProvider.notifier);
-      videoController.setPlaybackSpeed(1.0);
+      _rewindTimer?.cancel();
+      _rewindTimer = null;
+      videoController.setPlaybackSpeed(_prevPlaybackSpeed);
+      if (!_wasPlayingBeforeHold) {
+        videoController.pause();
+      }
       setState(() {
         _showSpeedIndicator = false;
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _rewindTimer?.cancel();
+    _rewindTimer = null;
+    _settingsSubscription?.cancel();
+    _settingsSubscription = null;
+    super.dispose();
   }
 
   String _formatDuration(Duration duration) {

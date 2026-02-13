@@ -1,4 +1,4 @@
-// This file is deprecated - use next_video_player.dart instead
+// This file is deprecated - use parthi_play_video_player.dart instead
 // Keeping for reference only
 
 import 'package:flutter/material.dart';
@@ -38,7 +38,7 @@ class OptimizedVideoPlayer extends StatelessWidget {
             ),
             SizedBox(height: 8),
             Text(
-              'Use NextVideoPlayer instead',
+              'Use ParthiPlayVideoPlayer instead',
               style: TextStyle(color: Colors.grey, fontSize: 14),
               textAlign: TextAlign.center,
             ),

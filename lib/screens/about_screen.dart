@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -6,17 +7,25 @@ class AboutScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final cardColor = isDark ? const Color(0xFF1E1E1E) : Colors.white;
+    final cardBorder =
+        isDark ? const Color(0xFF2A2A2A) : Colors.grey[300]!;
+    final primaryText = colorScheme.onSurface;
+    final secondaryText = colorScheme.onSurfaceVariant;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: colorScheme.surface,
         elevation: 0,
-        title: const Text(
+        title: Text(
           'About',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: TextStyle(color: primaryText, fontWeight: FontWeight.bold),
         ),
         centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(color: primaryText),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -47,10 +56,10 @@ class AboutScreen extends StatelessWidget {
             const SizedBox(height: 24),
 
             // App Name
-            const Text(
-              'NEXT-GEN VIDEO PLAYER',
+            Text(
+              'PARTHI PLAY',
               style: TextStyle(
-                color: Colors.white,
+                color: primaryText,
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
               ),
@@ -61,7 +70,7 @@ class AboutScreen extends StatelessWidget {
             // Version
             Text(
               'Version 1.0.0',
-              style: TextStyle(color: Colors.grey[400], fontSize: 16),
+              style: TextStyle(color: secondaryText, fontSize: 16),
             ),
 
             const SizedBox(height: 8),
@@ -69,7 +78,7 @@ class AboutScreen extends StatelessWidget {
             // Build Number
             Text(
               'Build 20240101',
-              style: TextStyle(color: Colors.grey[500], fontSize: 14),
+              style: TextStyle(color: secondaryText, fontSize: 14),
             ),
 
             const SizedBox(height: 32),
@@ -78,26 +87,26 @@ class AboutScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
+                color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2A)),
+                border: Border.all(color: cardBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'About',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: primaryText,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
-                    'NEXT-GEN VIDEO PLAYER is a professional video player application designed for the best viewing experience. With support for multiple video formats, gesture controls, and advanced features, it provides everything you need for video playback.',
+                  Text(
+                    'Parthi Play is a professional video player application designed for the best viewing experience. With support for multiple video formats, gesture controls, and advanced features, it provides everything you need for video playback.',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: primaryText,
                       fontSize: 14,
                       height: 1.5,
                     ),
@@ -112,30 +121,39 @@ class AboutScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
+                color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2A)),
+                border: Border.all(color: cardBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Key Features',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: primaryText,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  _buildFeatureItem('• Support for multiple video formats'),
-                  _buildFeatureItem('• Gesture controls for easy navigation'),
-                  _buildFeatureItem('• Adjustable playback speed'),
-                  _buildFeatureItem('• Multiple aspect ratio options'),
-                  _buildFeatureItem('• Subtitle support'),
-                  _buildFeatureItem('• Hardware acceleration'),
-                  _buildFeatureItem('• Performance optimization'),
-                  _buildFeatureItem('• Dark theme interface'),
+                  _buildFeatureItem(
+                    context,
+                    '- Support for multiple video formats',
+                  ),
+                  _buildFeatureItem(
+                    context,
+                    '- Gesture controls for easy navigation',
+                  ),
+                  _buildFeatureItem(context, '- Adjustable playback speed'),
+                  _buildFeatureItem(
+                    context,
+                    '- Multiple aspect ratio options',
+                  ),
+                  _buildFeatureItem(context, '- Subtitle support'),
+                  _buildFeatureItem(context, '- Hardware acceleration'),
+                  _buildFeatureItem(context, '- Performance optimization'),
+                  _buildFeatureItem(context, '- Dark theme interface'),
                 ],
               ),
             ),
@@ -146,30 +164,30 @@ class AboutScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
+                color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2A)),
+                border: Border.all(color: cardBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Developer',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: primaryText,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
-                  const Text(
+                  Text(
                     'Professional Flutter Development',
-                    style: TextStyle(color: Colors.white, fontSize: 14),
+                    style: TextStyle(color: primaryText, fontSize: 14),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Built with Flutter and Riverpod',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 12),
+                    style: TextStyle(color: secondaryText, fontSize: 12),
                   ),
                 ],
               ),
@@ -181,38 +199,46 @@ class AboutScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
+                color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2A)),
+                border: Border.all(color: cardBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Connect',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: primaryText,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
                   _buildLinkItem(
+                    context,
                     'Report Issues',
                     Icons.bug_report,
                     () => _launchUrl('https://github.com/issues'),
                   ),
                   _buildLinkItem(
+                    context,
                     'Request Features',
                     Icons.lightbulb_outline,
                     () => _launchUrl('https://github.com/features'),
                   ),
                   _buildLinkItem(
+                    context,
                     'Rate App',
                     Icons.star,
                     () => _launchUrl('https://play.google.com/store'),
                   ),
-                  _buildLinkItem('Share App', Icons.share, () => _shareApp()),
+                  _buildLinkItem(
+                    context,
+                    'Share App',
+                    Icons.share,
+                    () => _shareApp(context),
+                  ),
                 ],
               ),
             ),
@@ -223,33 +249,36 @@ class AboutScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(20),
               decoration: BoxDecoration(
-                color: const Color(0xFF1E1E1E),
+                color: cardColor,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF2A2A2A)),
+                border: Border.all(color: cardBorder),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
+                  Text(
                     'Legal',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: primaryText,
                       fontSize: 18,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
                   const SizedBox(height: 12),
                   _buildLinkItem(
+                    context,
                     'Privacy Policy',
                     Icons.privacy_tip,
                     () => _showPrivacyPolicy(context),
                   ),
                   _buildLinkItem(
+                    context,
                     'Terms of Service',
                     Icons.description,
                     () => _showTermsOfService(context),
                   ),
                   _buildLinkItem(
+                    context,
                     'Licenses',
                     Icons.info,
                     () => _showLicenses(context),
@@ -262,15 +291,15 @@ class AboutScreen extends StatelessWidget {
 
             // Copyright
             Text(
-              '© 2024 NEXT-GEN VIDEO PLAYER',
-              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              '© 2024 Parthi Play',
+              style: TextStyle(color: secondaryText, fontSize: 12),
             ),
 
             const SizedBox(height: 8),
 
             Text(
               'All rights reserved',
-              style: TextStyle(color: Colors.grey[600], fontSize: 12),
+              style: TextStyle(color: secondaryText, fontSize: 12),
             ),
 
             const SizedBox(height: 32),
@@ -280,17 +309,24 @@ class AboutScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildFeatureItem(String text) {
+  Widget _buildFeatureItem(BuildContext context, String text) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Text(
         text,
-        style: const TextStyle(color: Colors.white, fontSize: 14),
+        style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
       ),
     );
   }
 
-  Widget _buildLinkItem(String title, IconData icon, VoidCallback onTap) {
+  Widget _buildLinkItem(
+    BuildContext context,
+    String title,
+    IconData icon,
+    VoidCallback onTap,
+  ) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: InkWell(
@@ -301,10 +337,14 @@ class AboutScreen extends StatelessWidget {
             const SizedBox(width: 12),
             Text(
               title,
-              style: const TextStyle(color: Colors.white, fontSize: 14),
+              style: TextStyle(color: colorScheme.onSurface, fontSize: 14),
             ),
             const Spacer(),
-            Icon(Icons.arrow_forward_ios, color: Colors.grey[400], size: 16),
+            Icon(
+              Icons.arrow_forward_ios,
+              color: colorScheme.onSurfaceVariant,
+              size: 16,
+            ),
           ],
         ),
       ),
@@ -320,25 +360,44 @@ class AboutScreen extends StatelessWidget {
     }
   }
 
-  void _shareApp() {
-    // Implement share functionality
-    debugPrint('Share app functionality');
+  Future<void> _shareApp(BuildContext context) async {
+    const shareText =
+        'Check out Parthi Play — a powerful video player with advanced features.';
+    const subject = 'Parthi Play';
+
+    Share.share(
+      shareText,
+      subject: subject,
+    ).catchError((e) {
+      debugPrint('Error sharing app: $e');
+      if (!context.mounted) return ShareResult.unavailable;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(
+        const SnackBar(
+          content: Text('Unable to open share sheet'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return ShareResult.unavailable;
+    });
   }
 
   void _showPrivacyPolicy(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
+        backgroundColor: colorScheme.surface,
+        title: Text(
           'Privacy Policy',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: colorScheme.onSurface),
         ),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Text(
-            'Privacy Policy for Video Player Lite\n\n'
+            'Privacy Policy for Parthi Play\n\n'
             'Last updated: January 1, 2024\n\n'
-            'This privacy policy explains how Video Player Lite collects, uses, and protects your information.\n\n'
+            'This privacy policy explains how Parthi Play collects, uses, and protects your information.\n\n'
             'Information We Collect:\n'
             '- Usage analytics and crash reports\n'
             '- Device information for optimization\n'
@@ -353,7 +412,7 @@ class AboutScreen extends StatelessWidget {
             '- We use industry-standard security measures\n\n'
             'Contact Us:\n'
             'If you have questions about this privacy policy, please contact us.',
-            style: TextStyle(color: Colors.white),
+            style: TextStyle(color: colorScheme.onSurface),
           ),
         ),
         actions: [
@@ -367,19 +426,20 @@ class AboutScreen extends StatelessWidget {
   }
 
   void _showTermsOfService(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: const Text(
+        backgroundColor: colorScheme.surface,
+        title: Text(
           'Terms of Service',
-          style: TextStyle(color: Colors.white),
+          style: TextStyle(color: colorScheme.onSurface),
         ),
-        content: const SingleChildScrollView(
+        content: SingleChildScrollView(
           child: Text(
-            'Terms of Service for Video Player Lite\n\n'
+            'Terms of Service for Parthi Play\n\n'
             'Last updated: January 1, 2024\n\n'
-            'By using Video Player Lite, you agree to these terms:\n\n'
+            'By using Parthi Play, you agree to these terms:\n\n'
             '1. Acceptance of Terms\n'
             'By using this app, you accept these terms and conditions.\n\n'
             '2. Use of the App\n'
@@ -387,16 +447,16 @@ class AboutScreen extends StatelessWidget {
             '- You must not reverse engineer or modify the app\n'
             '- You must not violate any applicable laws\n\n'
             '3. Intellectual Property\n'
-            'All content and features are owned by Video Player Lite or its licensors.\n\n'
+            'All content and features are owned by Parthi Play or its licensors.\n\n'
             '4. Disclaimer\n'
             'The app is provided "as is" without warranties of any kind.\n\n'
             '5. Limitation of Liability\n'
-            'Video Player Lite is not liable for any damages arising from app use.\n\n'
+            'Parthi Play is not liable for any damages arising from app use.\n\n'
             '6. Changes to Terms\n'
             'We reserve the right to modify these terms at any time.\n\n'
             '7. Contact Information\n'
             'For questions about these terms, please contact us.',
-            style: TextStyle(color: Colors.white),
+            style: TextStyle(color: colorScheme.onSurface),
           ),
         ),
         actions: [
@@ -412,10 +472,10 @@ class AboutScreen extends StatelessWidget {
   void _showLicenses(BuildContext context) {
     showLicensePage(
       context: context,
-      applicationName: 'NEXT-GEN VIDEO PLAYER',
+      applicationName: 'PARTHI PLAY',
       applicationVersion: '1.0.0',
       applicationIcon: const Icon(Icons.play_circle_outline, color: Colors.red),
-      applicationLegalese: '© 2024 NEXT-GEN VIDEO PLAYER. All rights reserved.',
+      applicationLegalese: '© 2024 Parthi Play. All rights reserved.',
     );
   }
 }

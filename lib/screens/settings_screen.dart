@@ -4,6 +4,7 @@ import 'about_screen.dart';
 import 'scan_directories_settings_screen.dart';
 import '../services/theme_service.dart';
 import '../services/performance_service.dart';
+import '../services/settings_service.dart';
 import '../widgets/settings_section.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -18,9 +19,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   late bool _hwDecoding;
   late bool _frameDrop;
   late bool _skipLoopFilter;
+  late bool _autoPerformanceMode;
+  late bool _hdrToneMap;
 
   // App State
   bool _skipSilence = false;
+  int _doubleTapSeekSeconds = 10;
+  double _holdForwardSpeed = 2.0;
+  double _holdRewindSpeed = 2.0;
 
   @override
   void initState() {
@@ -29,6 +35,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _hwDecoding = PerformanceService.isHardwareDecodingEnabled;
     _frameDrop = PerformanceService.isFrameDropEnabled;
     _skipLoopFilter = PerformanceService.isSkipLoopFilterEnabled;
+    _autoPerformanceMode = PerformanceService.isAutoPerformanceEnabled;
+    _hdrToneMap = PerformanceService.isHdrToneMappingEnabled;
+    _loadGestureSettings();
+  }
+
+  Future<void> _loadGestureSettings() async {
+    final doubleTapSeconds = await SettingsService.getDoubleTapSeekSeconds();
+    final holdForwardSpeed = await SettingsService.getHoldForwardSpeed();
+    final holdRewindSpeed = await SettingsService.getHoldRewindSpeed();
+    if (!mounted) return;
+    setState(() {
+      _doubleTapSeekSeconds = doubleTapSeconds;
+      _holdForwardSpeed = holdForwardSpeed;
+      _holdRewindSpeed = holdRewindSpeed;
+    });
   }
 
   @override
@@ -58,6 +79,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               icon: Icons.speed_rounded,
               children: [
                 _buildSwitchSetting(
+                  'Auto Performance Mode',
+                  'Enable frame drop only if playback lags',
+                  _autoPerformanceMode,
+                  (value) {
+                    setState(() => _autoPerformanceMode = value);
+                    PerformanceService.setAutoPerformanceMode(value);
+                    if (value) {
+                      setState(() {
+                        _frameDrop = false;
+                        _skipLoopFilter = false;
+                      });
+                      PerformanceService.setFrameDrop(false);
+                      PerformanceService.setSkipLoopFilter(false);
+                    }
+                  },
+                ),
+                _buildSwitchSetting(
                   'Hardware Acceleration',
                   'Use GPU for smooth video decoding',
                   _hwDecoding,
@@ -82,6 +120,72 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   (value) {
                     setState(() => _skipLoopFilter = value);
                     PerformanceService.setSkipLoopFilter(value);
+                  },
+                ),
+                _buildSwitchSetting(
+                  'HDR Tone Mapping (Experimental)',
+                  'Improve HDR videos on SDR screens',
+                  _hdrToneMap,
+                  (value) {
+                    setState(() => _hdrToneMap = value);
+                    PerformanceService.setHdrToneMapping(value);
+                  },
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 24),
+
+            SettingsSection(
+              title: 'Gesture Controls',
+              icon: Icons.touch_app_rounded,
+              children: [
+                _buildSliderSetting(
+                  title: 'Double-tap seek',
+                  description: 'Skip seconds on double tap',
+                  value: _doubleTapSeekSeconds.toDouble(),
+                  min: 1,
+                  max: 60,
+                  divisions: 59,
+                  valueLabel: '${_doubleTapSeekSeconds}s',
+                  onChanged: (value) {
+                    final seconds = value.round();
+                    setState(() => _doubleTapSeekSeconds = seconds);
+                  },
+                  onChangeEnd: (value) {
+                    SettingsService.setDoubleTapSeekSeconds(
+                      value.round(),
+                    );
+                  },
+                ),
+                _buildSliderSetting(
+                  title: 'Hold forward speed',
+                  description: 'Speed for hold-forward',
+                  value: _holdForwardSpeed,
+                  min: 1.0,
+                  max: 4.0,
+                  divisions: 6,
+                  valueLabel: '${_holdForwardSpeed.toStringAsFixed(1)}x',
+                  onChanged: (value) {
+                    setState(() => _holdForwardSpeed = value);
+                  },
+                  onChangeEnd: (value) {
+                    SettingsService.setHoldForwardSpeed(value);
+                  },
+                ),
+                _buildSliderSetting(
+                  title: 'Hold rewind speed',
+                  description: 'Speed for hold-rewind',
+                  value: _holdRewindSpeed,
+                  min: 1.0,
+                  max: 4.0,
+                  divisions: 6,
+                  valueLabel: '${_holdRewindSpeed.toStringAsFixed(1)}x',
+                  onChanged: (value) {
+                    setState(() => _holdRewindSpeed = value);
+                  },
+                  onChangeEnd: (value) {
+                    SettingsService.setHoldRewindSpeed(value);
                   },
                 ),
               ],
@@ -325,6 +429,72 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
+  Widget _buildSliderSetting({
+    required String title,
+    required String description,
+    required double value,
+    required double min,
+    required double max,
+    required int divisions,
+    required String valueLabel,
+    required ValueChanged<double> onChanged,
+    required ValueChanged<double> onChangeEnd,
+  }) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              color: theme.textTheme.bodyLarge?.color,
+              fontSize: 16,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            description,
+            style: TextStyle(
+              color: theme.textTheme.bodyMedium?.color?.withValues(
+                alpha: 0.7,
+              ),
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Slider(
+                  value: value,
+                  min: min,
+                  max: max,
+                  divisions: divisions,
+                  label: valueLabel,
+                  activeColor: Colors.red,
+                  inactiveColor: Colors.red.withValues(alpha: 0.2),
+                  onChanged: onChanged,
+                  onChangeEnd: onChangeEnd,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                valueLabel,
+                style: TextStyle(
+                  color: theme.textTheme.bodyLarge?.color,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildNavigationSetting(
     String title,
     String description,
@@ -422,7 +592,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ),
             const SizedBox(height: 16),
             Text(
-              '• No data upload to servers.\n• No tracking or analytics.\n• Offline-first design.',
+              '- No data upload to servers.\n- No tracking or analytics.\n- Offline-first design.',
               style: TextStyle(
                 fontSize: 14,
                 height: 1.6,

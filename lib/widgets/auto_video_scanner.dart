@@ -27,7 +27,8 @@ class _AutoVideoScannerWidgetState
   Future<void> _initializeScanner() async {
     // 1. Load cache first
     final cached = await VideoScannerService.getCachedVideos();
-    if (mounted && cached.isNotEmpty) {
+    if (!mounted) return;
+    if (cached.isNotEmpty) {
       setState(() {
         videos = cached;
       });
@@ -57,19 +58,17 @@ class _AutoVideoScannerWidgetState
       final scannedVideos = await VideoScannerService.scanAllVideos(
         useCache: false,
       );
-      if (mounted) {
-        setState(() {
-          videos = scannedVideos;
-          isScanning = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        videos = scannedVideos;
+        isScanning = false;
+      });
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          if (showFullLoader) error = e.toString();
-          isScanning = false;
-        });
-      }
+      if (!mounted) return;
+      setState(() {
+        if (showFullLoader) error = e.toString();
+        isScanning = false;
+      });
     }
   }
 

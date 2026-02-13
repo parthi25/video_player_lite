@@ -8,14 +8,15 @@ import '../services/playlist_service.dart';
 import '../screens/video_cutter_screen.dart';
 import '../widgets/equalizer_widget.dart';
 
-class NextPlayerControls extends ConsumerStatefulWidget {
-  const NextPlayerControls({super.key});
+class ParthiPlayControls extends ConsumerStatefulWidget {
+  const ParthiPlayControls({super.key});
 
   @override
-  ConsumerState<NextPlayerControls> createState() => _NextPlayerControlsState();
+  ConsumerState<ParthiPlayControls> createState() =>
+      _ParthiPlayControlsState();
 }
 
-class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
+class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
     with TickerProviderStateMixin, WidgetsBindingObserver {
   bool _showSidePanel = false;
   bool _isRibbonExpanded = false;
@@ -72,24 +73,13 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
         final currentState = ref.read(videoPlayerControllerProvider);
         // Only hide if video is still playing
         if (currentState.isPlaying) {
+          ref
+              .read(videoPlayerControllerProvider.notifier)
+              .setControlsVisible(false);
           _fadeController.reverse();
         }
       }
     });
-  }
-
-  void _toggleControlsVisibility() {
-    final videoState = ref.read(videoPlayerControllerProvider);
-
-    if (_fadeController.status == AnimationStatus.completed) {
-      _fadeController.reverse();
-    } else {
-      _fadeController.forward();
-      // Only start hide timer if video is playing
-      if (videoState.isPlaying) {
-        _startHideTimer();
-      }
-    }
   }
 
   @override
@@ -112,34 +102,52 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
       }
     });
 
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: _toggleControlsVisibility,
-      child: FadeTransition(
-        opacity: _fadeAnimation,
-        child: IgnorePointer(
-          ignoring: _fadeController.status == AnimationStatus.dismissed,
-          child: Stack(
-            children: [
-              Container(color: Colors.black26),
-              if (!isLocked) _buildTopControls(videoController),
-              _buildBottomControls(videoController),
-              if (isLocked)
-                Center(
-                  child: IconButton(
-                    icon: const Icon(Icons.lock, color: Colors.white, size: 64),
-                    onPressed: () => videoController.toggleLock(),
-                  ),
+    ref.listen(videoPlayerControllerProvider.select((s) => s.showControls), (
+      _,
+      showControls,
+    ) {
+      if (showControls) {
+        if (_fadeController.status == AnimationStatus.dismissed) {
+          _fadeController.forward();
+        }
+        if (ref.read(videoPlayerControllerProvider).isPlaying) {
+          _startHideTimer();
+        }
+      } else {
+        _hideTimer?.cancel();
+        if (_fadeController.status == AnimationStatus.completed) {
+          _fadeController.reverse();
+        }
+      }
+    });
+
+    return FadeTransition(
+      opacity: _fadeAnimation,
+      child: IgnorePointer(
+        ignoring: _fadeController.status == AnimationStatus.dismissed,
+        child: Stack(
+          children: [
+            IgnorePointer(
+              ignoring: true,
+              child: Container(color: Colors.black26),
+            ),
+            if (!isLocked) _buildTopControls(videoController),
+            _buildBottomControls(videoController),
+            if (isLocked)
+              Center(
+                child: IconButton(
+                  icon: const Icon(Icons.lock, color: Colors.white, size: 64),
+                  onPressed: () => videoController.toggleLock(),
                 ),
-              if (_showSidePanel && !isLocked)
-                Positioned(
-                  top: 0,
-                  bottom: 0,
-                  right: 0,
-                  child: _buildSidePanel(videoController),
-                ),
-            ],
-          ),
+              ),
+            if (_showSidePanel && !isLocked)
+              Positioned(
+                top: 0,
+                bottom: 0,
+                right: 0,
+                child: _buildSidePanel(videoController),
+              ),
+          ],
         ),
       ),
     );
@@ -406,6 +414,8 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     final duration = ref.watch(
       videoPlayerControllerProvider.select((s) => s.duration),
     );
+    final hasDuration = duration.inMilliseconds > 0;
+    final displayPosition = _isSeeking ? _seekPosition : position;
 
     return Positioned(
       bottom: 0,
@@ -430,7 +440,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                   Row(
                     children: [
                       Text(
-                        _formatDuration(position),
+                        _formatDurationOrUnknown(displayPosition),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -454,31 +464,46 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                           ),
                           child: Slider(
                             min: 0.0,
-                            max: duration.inMilliseconds.toDouble(),
-                            value: position.inMilliseconds.toDouble().clamp(
-                              0.0,
-                              duration.inMilliseconds.toDouble(),
-                            ),
+                            max: hasDuration
+                                ? duration.inMilliseconds.toDouble()
+                                : 1.0,
+                            value: displayPosition.inMilliseconds
+                                .toDouble()
+                                .clamp(
+                                  0.0,
+                                  hasDuration
+                                      ? duration.inMilliseconds.toDouble()
+                                      : 1.0,
+                                ),
                             onChangeStart: (_) {
-                              _isSeeking = true;
+                              setState(() {
+                                _isSeeking = true;
+                                _seekPosition = displayPosition;
+                              });
                             },
                             onChangeEnd: (_) {
-                              _isSeeking = false;
-                            },
-                            onChanged: (value) {
-                              if (!_isSeeking) {
-                                _startHideTimer();
+                              setState(() {
+                                _isSeeking = false;
+                              });
+                              if (hasDuration) {
+                                videoController.seekTo(_seekPosition);
                               }
-                              _seekPosition = Duration(
-                                milliseconds: value.round(),
-                              );
-                              videoController.seekTo(_seekPosition);
                             },
+                            onChanged: hasDuration
+                                ? (value) {
+                                    _startHideTimer();
+                                    setState(() {
+                                      _seekPosition = Duration(
+                                        milliseconds: value.round(),
+                                      );
+                                    });
+                                  }
+                                : null,
                           ),
                         ),
                       ),
                       Text(
-                        _formatDuration(duration),
+                        _formatDurationOrUnknown(duration),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 12,
@@ -486,6 +511,20 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
                       ),
                     ],
                   ),
+                  if (hasDuration)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 2),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          '-${_formatDuration(duration - displayPosition)}',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 4),
                     child: Row(
@@ -752,6 +791,11 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
     }
   }
 
+  String _formatDurationOrUnknown(Duration duration) {
+    if (duration.inMilliseconds <= 0) return '--:--';
+    return _formatDuration(duration);
+  }
+
   void _showRotationControls(VideoPlayerControllerNotifier videoController) {
     videoController.toggleRotation();
   }
@@ -918,6 +962,7 @@ class _NextPlayerControlsState extends ConsumerState<NextPlayerControls>
   }
 
   void _showPiPControls(VideoPlayerControllerNotifier videoController) {
+    videoController.setControlsVisible(false);
     videoController.enterPIP();
   }
 

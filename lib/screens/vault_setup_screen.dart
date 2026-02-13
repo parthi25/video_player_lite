@@ -152,14 +152,23 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final surface = colorScheme.surface;
+    final surfaceVariant = colorScheme.surfaceContainerHighest;
+    final onSurface = colorScheme.onSurface;
+    final onSurfaceVariant = colorScheme.onSurfaceVariant;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: surface,
       body: Container(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [Colors.black, Colors.grey.shade900],
+            colors: isDark
+                ? [Colors.black, Colors.grey.shade900]
+                : [surface, surfaceVariant],
           ),
         ),
         child: SafeArea(
@@ -199,12 +208,12 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
                       const SizedBox(height: 30),
 
                       // Title
-                      const Text(
+                      Text(
                         'Setup Private Folder',
                         style: TextStyle(
                           fontSize: 28,
                           fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: onSurface,
                           letterSpacing: 1.2,
                         ),
                       ),
@@ -215,7 +224,7 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
                         'Create passwords to protect your private videos',
                         style: TextStyle(
                           fontSize: 16,
-                          color: Colors.grey.shade400,
+                          color: onSurfaceVariant,
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -356,7 +365,9 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: Colors.grey.shade900.withValues(alpha: 0.3),
+                          color: isDark
+                              ? Colors.grey.shade900.withValues(alpha: 0.3)
+                              : surfaceVariant,
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
                             color: Colors.grey.shade700.withValues(alpha: 0.5),
@@ -422,13 +433,20 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
     required VoidCallback onPasswordVisibilityToggle,
     required VoidCallback onConfirmVisibilityToggle,
   }) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final onSurface = colorScheme.onSurface;
+    final onSurfaceVariant = colorScheme.onSurfaceVariant;
+    final fieldColor =
+        isDark ? Colors.grey.shade900.withValues(alpha: 0.5) : colorScheme.surfaceContainerHighest;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           title,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: onSurface,
             fontSize: 18,
             fontWeight: FontWeight.w600,
           ),
@@ -436,14 +454,14 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
         const SizedBox(height: 4),
         Text(
           subtitle,
-          style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+          style: TextStyle(color: onSurfaceVariant, fontSize: 14),
         ),
         const SizedBox(height: 16),
 
         // Password Field
         Container(
           decoration: BoxDecoration(
-            color: Colors.grey.shade900.withValues(alpha: 0.5),
+            color: fieldColor,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey.shade700, width: 1),
           ),
@@ -451,10 +469,10 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
             controller: passwordController,
             focusNode: passwordFocus,
             obscureText: !isPasswordVisible,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
+            style: TextStyle(color: onSurface, fontSize: 16),
             decoration: InputDecoration(
               hintText: 'Enter password',
-              hintStyle: TextStyle(color: Colors.grey.shade500),
+              hintStyle: TextStyle(color: onSurfaceVariant),
               prefixIcon: const Icon(Icons.lock_outline, color: Colors.grey),
               suffixIcon: IconButton(
                 onPressed: onPasswordVisibilityToggle,
@@ -477,7 +495,7 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
         // Confirm Password Field
         Container(
           decoration: BoxDecoration(
-            color: Colors.grey.shade900.withValues(alpha: 0.5),
+            color: fieldColor,
             borderRadius: BorderRadius.circular(12),
             border: Border.all(color: Colors.grey.shade700, width: 1),
           ),
@@ -485,10 +503,10 @@ class _VaultSetupScreenState extends State<VaultSetupScreen>
             controller: confirmController,
             focusNode: confirmFocus,
             obscureText: !isConfirmVisible,
-            style: const TextStyle(color: Colors.white, fontSize: 16),
+            style: TextStyle(color: onSurface, fontSize: 16),
             decoration: InputDecoration(
               hintText: 'Confirm password',
-              hintStyle: TextStyle(color: Colors.grey.shade500),
+              hintStyle: TextStyle(color: onSurfaceVariant),
               prefixIcon: const Icon(Icons.lock_outline, color: Colors.grey),
               suffixIcon: IconButton(
                 onPressed: onConfirmVisibilityToggle,

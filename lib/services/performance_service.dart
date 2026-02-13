@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
@@ -13,11 +14,22 @@ class PerformanceService {
   static bool? _forcedHwDec;
   static bool? _forcedFrameDrop;
   static bool? _forcedSkipLoopFilter;
+  static bool? _autoPerformanceMode;
+  static bool? _dynamicFrameDrop;
+  static bool? _dynamicSkipLoopFilter;
+  static bool? _hdrToneMap;
+
+  static final StreamController<void> _changes =
+      StreamController<void>.broadcast();
+
+  static Stream<void> get changes => _changes.stream;
 
   // Keys for persistence
   static const String _hwDecKey = 'perf_hw_dec';
   static const String _frameDropKey = 'perf_frame_drop';
   static const String _skipLoopKey = 'perf_skip_loop';
+  static const String _autoPerfKey = 'perf_auto_mode';
+  static const String _hdrToneMapKey = 'perf_hdr_tonemap';
 
   static Future<void> initialize() async {
     if (_isInitialized) return;
@@ -64,6 +76,8 @@ class PerformanceService {
       _forcedHwDec = prefs.getBool(_hwDecKey);
       _forcedFrameDrop = prefs.getBool(_frameDropKey);
       _forcedSkipLoopFilter = prefs.getBool(_skipLoopKey);
+      _autoPerformanceMode = prefs.getBool(_autoPerfKey);
+      _hdrToneMap = prefs.getBool(_hdrToneMapKey);
     } catch (e) {
       debugPrint('Error loading performance settings: $e');
     }
@@ -73,23 +87,70 @@ class PerformanceService {
     _forcedHwDec = enable;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_hwDecKey, enable);
+    _changes.add(null);
   }
 
   static Future<void> setFrameDrop(bool enable) async {
     _forcedFrameDrop = enable;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_frameDropKey, enable);
+    _changes.add(null);
   }
 
   static Future<void> setSkipLoopFilter(bool enable) async {
     _forcedSkipLoopFilter = enable;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_skipLoopKey, enable);
+    _changes.add(null);
+  }
+
+  static Future<void> setAutoPerformanceMode(bool enable) async {
+    _autoPerformanceMode = enable;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_autoPerfKey, enable);
+    _changes.add(null);
+  }
+
+  static Future<void> setHdrToneMapping(bool enable) async {
+    _hdrToneMap = enable;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_hdrToneMapKey, enable);
+    _changes.add(null);
+  }
+
+  static bool get isHdrToneMappingEnabled => _hdrToneMap ?? false;
+
+  static bool get isAutoPerformanceEnabled => _autoPerformanceMode ?? false;
+
+  static void setDynamicPerformance({
+    bool? frameDrop,
+    bool? skipLoopFilter,
+  }) {
+    if (frameDrop != null) _dynamicFrameDrop = frameDrop;
+    if (skipLoopFilter != null) _dynamicSkipLoopFilter = skipLoopFilter;
+  }
+
+  static void resetDynamicPerformance() {
+    _dynamicFrameDrop = null;
+    _dynamicSkipLoopFilter = null;
   }
 
   static bool get isHardwareDecodingEnabled => _forcedHwDec ?? true; // Default true
-  static bool get isFrameDropEnabled => _forcedFrameDrop ?? _isLowEndDevice; // Default depend on device
-  static bool get isSkipLoopFilterEnabled => _forcedSkipLoopFilter ?? _isLowEndDevice; // Default depend on device
+  static bool get isFrameDropEnabled {
+    if (_forcedFrameDrop != null) return _forcedFrameDrop!;
+    if (isAutoPerformanceEnabled && _dynamicFrameDrop != null) {
+      return _dynamicFrameDrop!;
+    }
+    return _isLowEndDevice;
+  }
+
+  static bool get isSkipLoopFilterEnabled {
+    if (_forcedSkipLoopFilter != null) return _forcedSkipLoopFilter!;
+    if (isAutoPerformanceEnabled && _dynamicSkipLoopFilter != null) {
+      return _dynamicSkipLoopFilter!;
+    }
+    return _isLowEndDevice;
+  }
 
   static Future<void> optimizeForVideoPlayback() async {
     if (_isOptimizedForVideo) return;
@@ -119,8 +180,6 @@ class PerformanceService {
       await SystemChrome.setPreferredOrientations([
         DeviceOrientation.portraitUp,
         DeviceOrientation.portraitDown,
-        DeviceOrientation.landscapeLeft,
-        DeviceOrientation.landscapeRight,
       ]);
 
       // Show system UI again

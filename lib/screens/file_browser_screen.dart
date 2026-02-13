@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/file_browser_service.dart';
+import '../services/thumbnail_service.dart';
 import '../widgets/video_file_item.dart';
 
 class FileBrowserScreen extends StatefulWidget {
@@ -23,6 +24,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   @override
   void initState() {
     super.initState();
+    ThumbnailService.initialize();
     _checkPermissionAndLoadFiles();
     _searchController.addListener(_onSearchChanged);
   }
@@ -41,6 +43,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
     try {
       final hasPermission = await FileBrowserService.requestStoragePermission();
+      if (!mounted) return;
       
       if (hasPermission) {
         setState(() {
@@ -55,6 +58,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
         _showPermissionDeniedDialog();
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -65,6 +69,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   Future<void> _loadVideoFiles() async {
     try {
       final storageDirectories = await FileBrowserService.getStorageDirectories();
+      if (!mounted) return;
       
       if (storageDirectories.isNotEmpty) {
         setState(() {
@@ -77,6 +82,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
         });
       }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -91,12 +97,27 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
     try {
       final videoFiles = await FileBrowserService.getVideoFilesInDirectory(path);
+      if (!mounted) return;
       setState(() {
         _videoFiles = videoFiles;
         _filteredVideoFiles = videoFiles;
         _isLoading = false;
       });
+
+      final videoPaths = videoFiles
+          .where((v) => !v.isAudio && !v.isStreaming)
+          .map((v) => v.path)
+          .toList();
+      if (videoPaths.isNotEmpty) {
+        ThumbnailService.generateThumbnailsBatch(videoPaths);
+        Future.delayed(const Duration(milliseconds: 800), () {
+          if (mounted) {
+            setState(() {});
+          }
+        });
+      }
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
@@ -166,20 +187,28 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: colorScheme.surface,
         elevation: 0,
         title: const Text(
           'Video Browser',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+          style: TextStyle(fontWeight: FontWeight.bold),
         ),
-        iconTheme: const IconThemeData(color: Colors.white),
+        iconTheme: IconThemeData(
+          color: isDark ? Colors.white : Colors.black,
+        ),
         actions: [
           IconButton(
             onPressed: _refreshFiles,
-            icon: const Icon(Icons.refresh, color: Colors.white),
+            icon: Icon(
+              Icons.refresh,
+              color: isDark ? Colors.white : Colors.black,
+            ),
           ),
         ],
       ),
@@ -208,6 +237,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Widget _buildPermissionRequest() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32.0),
@@ -220,17 +250,17 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
               color: Colors.grey,
             ),
             const SizedBox(height: 24),
-            const Text(
+            Text(
               'Storage Permission Required',
               style: TextStyle(
-                color: Colors.white,
+                color: isDark ? Colors.white : Colors.black,
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 16),
-            const Text(
+            Text(
               'Allow access to your device storage to browse and play video files.',
               style: TextStyle(
                 color: Colors.grey,
@@ -258,15 +288,16 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Widget _buildSearchBar() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[900],
+        color: isDark ? Colors.grey[900] : Colors.grey[200],
         borderRadius: BorderRadius.circular(12),
       ),
       child: TextField(
         controller: _searchController,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: isDark ? Colors.white : Colors.black),
         decoration: InputDecoration(
           hintText: 'Search videos...',
           hintStyle: TextStyle(color: Colors.grey[400]),
@@ -287,11 +318,12 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Widget _buildPathIndicator() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.grey[900],
+        color: isDark ? Colors.grey[900] : Colors.grey[200],
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
@@ -314,6 +346,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
   }
 
   Widget _buildVideoList() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     if (_filteredVideoFiles.isEmpty) {
       return Expanded(
         child: Center(
@@ -330,8 +363,8 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
                 _searchTerm.isNotEmpty
                     ? 'No videos found for "$_searchTerm"'
                     : 'No video files found',
-                style: const TextStyle(
-                  color: Colors.grey,
+                style: TextStyle(
+                  color: isDark ? Colors.grey : Colors.grey[700],
                   fontSize: 18,
                   fontWeight: FontWeight.w500,
                 ),
@@ -354,6 +387,7 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     return Expanded(
       child: ListView.builder(
         controller: _scrollController,
+        cacheExtent: 600,
         padding: const EdgeInsets.all(16),
         itemCount: _filteredVideoFiles.length,
         itemBuilder: (context, index) {

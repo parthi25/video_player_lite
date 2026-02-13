@@ -123,9 +123,15 @@ class FileBrowserService {
 
   static Future<bool> requestStoragePermission() async {
     if (Platform.isAndroid) {
-      final androidInfo = await Permission.storage.request();
-      final manageInfo = await Permission.manageExternalStorage.request();
-      return androidInfo.isGranted || manageInfo.isGranted;
+      // Android 13+ should use media-specific permissions.
+      final videoStatus = await Permission.videos.request();
+      final audioStatus = await Permission.audio.request();
+      if (videoStatus.isGranted || audioStatus.isGranted) {
+        return true;
+      }
+      // Fallback for Android 12 and below.
+      final storageStatus = await Permission.storage.request();
+      return storageStatus.isGranted;
     } else if (Platform.isIOS) {
       final photosPermission = await Permission.photos.request();
       return photosPermission.isGranted;

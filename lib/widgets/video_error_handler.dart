@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/video_player_controller.dart';
+import '../services/youtube_stream_service.dart';
 
 class CodecErrorHandler {
   static bool _isHEVCUnsupported = false;
@@ -57,6 +59,11 @@ class _VideoPlayerErrorHandlerState
     extends ConsumerState<VideoPlayerErrorHandler> {
   bool _hasError = false;
   String _errorMessage = '';
+
+  bool get _isNetworkError {
+    final msg = _errorMessage.toLowerCase();
+    return msg.contains('timed out') || msg.contains('network');
+  }
 
   @override
   void initState() {
@@ -173,6 +180,28 @@ class _VideoPlayerErrorHandlerState
                       style: TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
+                  if (widget.videoUrl != null &&
+                      YoutubeStreamService.isYoutubeUrl(widget.videoUrl!)) ...[
+                    const SizedBox(width: 16),
+                    ElevatedButton(
+                      onPressed: _openInYoutube,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade700,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 14,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Open in YouTube',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
                   const SizedBox(width: 16),
                   Container(
                     decoration: BoxDecoration(
@@ -188,7 +217,7 @@ class _VideoPlayerErrorHandlerState
                         ),
                       ],
                     ),
-                    child: ElevatedButton(
+                      child: ElevatedButton(
                       onPressed: _retryPlayback,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.transparent,
@@ -202,9 +231,9 @@ class _VideoPlayerErrorHandlerState
                           borderRadius: BorderRadius.circular(12),
                         ),
                       ),
-                      child: const Text(
-                        'Retry',
-                        style: TextStyle(fontWeight: FontWeight.w600),
+                      child: Text(
+                        _isNetworkError ? 'Reconnect' : 'Retry',
+                        style: const TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
                   ),
@@ -215,5 +244,13 @@ class _VideoPlayerErrorHandlerState
         ),
       ),
     );
+  }
+
+  Future<void> _openInYoutube() async {
+    final url = widget.videoUrl;
+    if (url == null || url.isEmpty) return;
+
+    final uri = Uri.parse(url);
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 }

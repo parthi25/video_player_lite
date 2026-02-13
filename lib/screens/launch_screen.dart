@@ -61,16 +61,31 @@ class _LaunchScreenState extends State<LaunchScreen>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(backgroundColor: Colors.black, body: _buildContent());
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Scaffold(
+      backgroundColor: colorScheme.surface,
+      body: _buildContent(isDark, colorScheme),
+    );
   }
 
-  Widget _buildContent() {
+  Widget _buildContent(bool isDark, ColorScheme colorScheme) {
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Color(0xFF000000), Color(0xFF1A1A1A), Color(0xFF000000)],
+          colors: isDark
+              ? const [
+                  Color(0xFF000000),
+                  Color(0xFF1A1A1A),
+                  Color(0xFF000000),
+                ]
+              : [
+                  colorScheme.surface,
+                  colorScheme.surfaceContainerHighest,
+                  colorScheme.surface,
+                ],
         ),
       ),
       child: Center(
@@ -110,27 +125,16 @@ class _LaunchScreenState extends State<LaunchScreen>
                     const SizedBox(height: 40),
 
                     // App Name
-                    const Text(
-                      'PARTHI',
+                    Text(
+                      'PARTHI PLAY',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: colorScheme.onSurface,
                         fontSize: 28,
                         fontWeight: FontWeight.bold,
                         letterSpacing: 3,
                       ),
                     ),
-
                     const SizedBox(height: 8),
-
-                    const Text(
-                      'PLAY',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 2,
-                      ),
-                    ),
 
                     const SizedBox(height: 40),
 
@@ -152,7 +156,7 @@ class _LaunchScreenState extends State<LaunchScreen>
                     Text(
                       'Professional Video Experience',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
+                        color: colorScheme.onSurfaceVariant,
                         fontSize: 14,
                         letterSpacing: 1,
                       ),

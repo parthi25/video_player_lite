@@ -3,11 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path;
 import 'dart:io';
 import '../services/vault_service.dart';
-import '../widgets/next_video_player.dart';
+import '../widgets/parthi_play_video_player.dart';
 
 class VaultScreen extends ConsumerStatefulWidget {
   const VaultScreen({super.key});
@@ -52,6 +50,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
           CurvedAnimation(parent: _listController, curve: Curves.easeOutCubic),
         );
 
+    VaultService.cleanupPlaybackTempFiles();
     _loadVaultVideos();
   }
 
@@ -128,9 +127,17 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
     if (!confirmed) return;
 
     int successCount = 0;
+    int index = 0;
+    final total = _selectedVideos.length;
 
     for (final videoId in _selectedVideos) {
-      final success = await VaultService.unhideVideo(videoId);
+      index += 1;
+      final video = _vaultVideos.firstWhere((v) => v.id == videoId);
+      final success = await _unhideWithProgress(
+        videoId,
+        title: 'Restoring ${video.fileName}',
+        progressPrefix: '$index of $total',
+      );
       if (success) successCount++;
     }
 
@@ -157,9 +164,9 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
 
     if (!confirmed) return;
 
+    List<String> exportedPaths = [];
     try {
       int successCount = 0;
-      List<String> exportedPaths = [];
 
       for (final videoId in _selectedVideos) {
         try {
@@ -206,25 +213,23 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
           ),
         );
       }
+    } finally {
+      for (final path in exportedPaths) {
+        try {
+          final file = File(path);
+          if (await file.exists()) {
+            await file.delete();
+          }
+        } catch (_) {
+          // Ignore cleanup errors
+        }
+      }
     }
   }
 
   Future<String?> _exportVideoForSharing(VaultVideo video) async {
     try {
-      // Get temporary directory
-      final tempDir = await getTemporaryDirectory();
-      final fileName = 'shared_${video.fileName}';
-      final exportPath = path.join(tempDir.path, fileName);
-
-      // Copy hidden video to temporary location
-      final sourceFile = File(video.hiddenPath);
-
-      if (await sourceFile.exists()) {
-        await sourceFile.copy(exportPath);
-        return exportPath;
-      }
-
-      return null;
+      return await VaultService.exportVideoForSharing(video);
     } catch (e) {
       debugPrint('Error exporting video for sharing: $e');
       return null;
@@ -262,20 +267,24 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
   }
 
   Future<bool> _showConfirmDialog(String title, String message) async {
+    final colorScheme = Theme.of(context).colorScheme;
     final result = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(title),
         content: Text(message),
-        backgroundColor: Colors.grey.shade900,
-        titleTextStyle: const TextStyle(color: Colors.white, fontSize: 18),
-        contentTextStyle: const TextStyle(color: Colors.white70, fontSize: 16),
+        backgroundColor: colorScheme.surface,
+        titleTextStyle: TextStyle(color: colorScheme.onSurface, fontSize: 18),
+        contentTextStyle: TextStyle(
+          color: colorScheme.onSurfaceVariant,
+          fontSize: 16,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: Text(
               'Cancel',
-              style: TextStyle(color: Colors.grey.shade400),
+              style: TextStyle(color: colorScheme.onSurfaceVariant),
             ),
           ),
           TextButton(
@@ -291,25 +300,30 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final surface = colorScheme.surface;
+    final onSurface = colorScheme.onSurface;
+    final onSurfaceVariant = colorScheme.onSurfaceVariant;
+
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: surface,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: surface,
         elevation: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
+            Text(
               'Privacy Vault',
               style: TextStyle(
-                color: Colors.white,
+                color: onSurface,
                 fontSize: 20,
                 fontWeight: FontWeight.bold,
               ),
             ),
             Text(
               '${_vaultVideos.length} protected videos',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 14),
+              style: TextStyle(color: onSurfaceVariant, fontSize: 14),
             ),
           ],
         ),
@@ -317,10 +331,10 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
           if (_isSelectionMode)
             IconButton(
               onPressed: _clearSelection,
-              icon: const Icon(Icons.close, color: Colors.white),
+              icon: Icon(Icons.close, color: onSurface),
             ),
           PopupMenuButton<String>(
-            icon: Icon(Icons.more_vert, color: Colors.grey.shade400),
+            icon: Icon(Icons.more_vert, color: onSurfaceVariant),
             onSelected: (value) async {
               switch (value) {
                 case 'logout':
@@ -403,6 +417,10 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
   }
 
   Widget _buildBody() {
+    final colorScheme = Theme.of(context).colorScheme;
+    final onSurface = colorScheme.onSurface;
+    final onSurfaceVariant = colorScheme.onSurfaceVariant;
+
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(
@@ -416,16 +434,16 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.lock, size: 80, color: Colors.grey.shade600),
+            Icon(Icons.lock, size: 80, color: onSurfaceVariant),
             const SizedBox(height: 20),
             Text(
               'Privacy Vault is Empty',
-              style: TextStyle(color: Colors.grey.shade400, fontSize: 18),
+              style: TextStyle(color: onSurface, fontSize: 18),
             ),
             const SizedBox(height: 8),
             Text(
               'Add private videos to keep them secure',
-              style: TextStyle(color: Colors.grey.shade500, fontSize: 14),
+              style: TextStyle(color: onSurfaceVariant, fontSize: 14),
             ),
           ],
         ),
@@ -441,18 +459,23 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
           padding: const EdgeInsets.all(16),
           itemCount: _vaultVideos.length,
           itemBuilder: (context, index) {
+            final isDark = Theme.of(context).brightness == Brightness.dark;
             final video = _vaultVideos[index];
             final isSelected = _selectedVideos.contains(video.id);
 
             return Container(
               margin: const EdgeInsets.only(bottom: 12),
               decoration: BoxDecoration(
-                color: Colors.grey.shade900.withValues(alpha: 0.3),
+                color: isDark
+                    ? Colors.grey.shade900.withValues(alpha: 0.3)
+                    : Colors.grey[100],
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: isSelected
                       ? Colors.red.shade600
-                      : Colors.grey.shade700.withValues(alpha: 0.5),
+                      : (isDark
+                            ? Colors.grey.shade700.withValues(alpha: 0.5)
+                            : Colors.grey[300]!),
                   width: isSelected ? 2 : 1,
                 ),
               ),
@@ -462,15 +485,19 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                   width: 60,
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Colors.grey.shade800,
+                    color: isDark ? Colors.grey.shade800 : Colors.grey[300],
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Icon(Icons.lock, color: Colors.grey, size: 30),
+                  child: Icon(
+                    Icons.lock,
+                    color: isDark ? Colors.grey : Colors.grey[700],
+                    size: 30,
+                  ),
                 ),
                 title: Text(
                   video.fileName,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: onSurface,
                     fontSize: 16,
                     fontWeight: FontWeight.w500,
                   ),
@@ -483,18 +510,12 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                     const SizedBox(height: 4),
                     Text(
                       _formatFileSize(video.fileSize),
-                      style: TextStyle(
-                        color: Colors.grey.shade400,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: onSurfaceVariant, fontSize: 12),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Protected: ${_formatDate(video.hiddenDate)}',
-                      style: TextStyle(
-                        color: Colors.grey.shade500,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: onSurfaceVariant, fontSize: 12),
                     ),
                   ],
                 ),
@@ -511,21 +532,19 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
                     else ...[
                       IconButton(
                         onPressed: () => _playVideo(video),
-                        icon: const Icon(Icons.play_arrow, color: Colors.white),
+                        icon: Icon(Icons.play_arrow, color: onSurface),
                       ),
                       PopupMenuButton<String>(
-                        icon: Icon(
-                          Icons.more_vert,
-                          color: Colors.grey.shade400,
-                        ),
+                        icon: Icon(Icons.more_vert, color: onSurfaceVariant),
                         onSelected: (value) async {
                           switch (value) {
                             case 'unhide':
                               final scaffoldMessenger = ScaffoldMessenger.of(
                                 context,
                               );
-                              final success = await VaultService.unhideVideo(
+                              final success = await _unhideWithProgress(
                                 video.id,
+                                title: 'Restoring ${video.fileName}',
                               );
                               if (success && mounted) {
                                 scaffoldMessenger.showSnackBar(
@@ -677,12 +696,123 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
     );
   }
 
-  void _playVideo(VaultVideo video) {
-    Navigator.of(context).push(
+  Future<void> _playVideo(VaultVideo video) async {
+    final navigator = Navigator.of(context);
+    final handle = await VaultService.prepareDirectPlayback(video);
+    if (handle.renameFailed && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            handle.copyCreated
+                ? 'File was copied for playback. Will clean up after.'
+                : 'Unable to prepare file name for playback. Trying direct play.',
+          ),
+          backgroundColor: Colors.orange.shade700,
+        ),
+      );
+    }
+
+    if (!mounted) return;
+    navigator.push(
       MaterialPageRoute(
-        builder: (context) => NextVideoPlayer(videoPath: video.hiddenPath),
+        builder: (context) => ParthiPlayVideoPlayer(
+          videoPath: handle.playPath,
+          autoPlay: true,
+          onVideoEnded: () {
+            VaultService.restoreDirectPlayback(handle);
+            if (!mounted) return;
+            if (navigator.canPop()) {
+              navigator.pop();
+            }
+          },
+          onBackPressed: () {
+            VaultService.restoreDirectPlayback(handle);
+            if (!mounted) return;
+            if (navigator.canPop()) {
+              navigator.pop();
+            }
+          },
+        ),
       ),
     );
+  }
+
+  Future<bool> _unhideWithProgress(
+    String videoId, {
+    required String title,
+    String? progressPrefix,
+  }) async {
+    final navigator = Navigator.of(context);
+    bool dialogShown = false;
+    double progressValue = 0.0;
+    void Function(VoidCallback fn)? updateDialog;
+
+    try {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            updateDialog = setDialogState;
+            return AlertDialog(
+              content: SizedBox(
+                width: 320,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title),
+                    if (progressPrefix != null) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        progressPrefix,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(
+                      value: progressValue.clamp(0.0, 1.0),
+                      backgroundColor: Colors.grey.shade300,
+                      color: Colors.green.shade700,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${(progressValue * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      );
+      dialogShown = true;
+
+      final success = await VaultService.unhideVideo(
+        videoId,
+        onProgress: (value) {
+          if (!mounted) return;
+          updateDialog?.call(() {
+            progressValue = value;
+          });
+        },
+      );
+
+      return success;
+    } catch (e) {
+      return false;
+    } finally {
+      if (mounted && dialogShown) {
+        navigator.pop();
+      }
+    }
   }
 
   String _formatFileSize(int bytes) {
@@ -719,6 +849,9 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
     // Capture dependencies before async work
     final navigator = Navigator.of(context);
     final scaffoldMessenger = ScaffoldMessenger.of(context);
+    bool dialogShown = false;
+    double progressValue = 0.0;
+    void Function(VoidCallback fn)? updateDialog;
 
     try {
       HapticFeedback.mediumImpact();
@@ -743,19 +876,50 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (dialogContext) => const AlertDialog(
-          content: Row(
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(width: 16),
-              Text('Securing video in vault...'),
-            ],
-          ),
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) {
+            updateDialog = setDialogState;
+            return AlertDialog(
+              content: SizedBox(
+                width: 320,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Securing video in vault...'),
+                    const SizedBox(height: 16),
+                    LinearProgressIndicator(
+                      value: progressValue.clamp(0.0, 1.0),
+                      backgroundColor: Colors.grey.shade300,
+                      color: Colors.red.shade700,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${(progressValue * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
         ),
       );
+      dialogShown = true;
 
       // Hide video with encryption
-      final success = await VaultService.hideVideo(filePath);
+      final success = await VaultService.hideVideo(
+        filePath,
+        onProgress: (value) {
+          if (!mounted) return;
+          updateDialog?.call(() {
+            progressValue = value;
+          });
+        },
+      );
 
       // Check mounted after async call
       if (!mounted) return;
@@ -804,7 +968,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen>
       );
     } finally {
       // Always close dialog if open
-      if (mounted) {
+      if (mounted && dialogShown) {
         navigator.pop();
       }
     }

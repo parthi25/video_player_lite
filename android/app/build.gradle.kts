@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.example.video_player_lite"
+    namespace = "com.parthi.play"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -41,7 +41,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.nextplayer.app"
+        applicationId = "com.parthi.play"
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -55,9 +55,10 @@ android {
         release {
             signingConfig = signingConfigs.getByName("debug")
             
-            // Enable minification with better ProGuard rules
-            isMinifyEnabled = true
-            isShrinkResources = true
+            // Flutter apps can break with R8/resource shrinking in release;
+            // keep them off unless fully audited with proper keep rules.
+            isMinifyEnabled = false
+            isShrinkResources = false
             
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

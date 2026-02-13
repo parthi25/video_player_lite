@@ -3,14 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/video_player_controller.dart';
 import '../widgets/subtitle_selection_widget.dart';
 
-class NextPlayerFeatures extends ConsumerStatefulWidget {
-  const NextPlayerFeatures({super.key});
+class ParthiPlayFeatures extends ConsumerStatefulWidget {
+  const ParthiPlayFeatures({super.key});
 
   @override
-  ConsumerState<NextPlayerFeatures> createState() => _NextPlayerFeaturesState();
+  ConsumerState<ParthiPlayFeatures> createState() =>
+      _ParthiPlayFeaturesState();
 }
 
-class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
+class _ParthiPlayFeaturesState extends ConsumerState<ParthiPlayFeatures> {
   @override
   Widget build(BuildContext context) {
     final videoState = ref.watch(videoPlayerControllerProvider);
@@ -35,7 +36,7 @@ class _NextPlayerFeaturesState extends ConsumerState<NextPlayerFeatures> {
                 const Icon(Icons.settings, color: Colors.red),
                 const SizedBox(width: 12),
                 const Text(
-                  'Next Player Settings',
+                  'Parthi Play Settings',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 18,

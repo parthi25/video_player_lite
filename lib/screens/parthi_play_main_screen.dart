@@ -1,33 +1,40 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:next_gen_video_player/services/vault_service.dart';
+import 'package:receive_sharing_intent/receive_sharing_intent.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/share_service.dart';
 
 import 'dart:io';
 
-import '../widgets/next_video_player.dart';
+import '../widgets/parthi_play_video_player.dart';
 import '../services/memory_monitor_service.dart';
 import '../services/video_scanner_service.dart';
 import '../services/playlist_service.dart';
 import '../services/file_browser_service.dart';
 import '../services/theme_service.dart';
 import '../services/thumbnail_service.dart';
+import '../services/stream_sources_service.dart';
 import '../core/video_player_controller.dart';
 import 'settings_screen.dart';
 
-class NextPlayerMainScreen extends ConsumerStatefulWidget {
-  const NextPlayerMainScreen({super.key});
+class ParthiPlayMainScreen extends ConsumerStatefulWidget {
+  const ParthiPlayMainScreen({super.key});
 
   @override
-  ConsumerState<NextPlayerMainScreen> createState() =>
-      _NextPlayerMainScreenState();
+  ConsumerState<ParthiPlayMainScreen> createState() =>
+      _ParthiPlayMainScreenState();
 }
 
-class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
+class _ParthiPlayMainScreenState extends ConsumerState<ParthiPlayMainScreen>
     with TickerProviderStateMixin {
   String? _videoUrl;
   String? _videoPath;
   final TextEditingController _urlController = TextEditingController();
+  StreamSubscription<List<SharedMediaFile>>? _shareMediaSub;
   late TabController _tabController;
   List<VideoFile> _localVideos = [];
   List<VideoFile> _filteredVideos = [];
@@ -35,6 +42,12 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
   String? _currentFolderName;
   final Map<String, List<VideoFile>> _foldersMap = {};
   final List<String> _folderNames = [];
+  List<VideoFile> _streamVideos = [];
+  bool _isLoadingStreams = false;
+  Set<String> _customStreamUrls = {};
+  static const String _recentUrlsKey = 'recent_stream_urls';
+  static const int _maxRecentUrls = 8;
+  DateTime? _lastScanSnackAt;
 
   @override
   void initState() {
@@ -42,28 +55,47 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     _tabController = TabController(length: 3, vsync: this);
     MemoryMonitorService.startMonitoring();
     ThumbnailService.initialize();
-    _initializeVideoScanner();
+    _initShareIntentHandling();
+    _loadStreams();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _initializeVideoScanner();
+      }
+    });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _urlController.dispose();
+    _shareMediaSub?.cancel();
     MemoryMonitorService.stopMonitoring();
     super.dispose();
   }
 
   Future<void> _initializeVideoScanner() async {
     try {
+      await Future.delayed(const Duration(milliseconds: 600));
       final cachedVideos = await VideoScannerService.getCachedVideos();
       if (mounted && cachedVideos.isNotEmpty) {
         setState(() {
           _localVideos = cachedVideos;
           _filteredVideos = cachedVideos;
         });
+        final cachedPaths = cachedVideos
+            .where((v) => v.type == MediaType.video)
+            .map((v) => v.path)
+            .toList();
+        if (cachedPaths.isNotEmpty) {
+          ThumbnailService.generateThumbnailsBatch(cachedPaths);
+          Future.delayed(const Duration(milliseconds: 800), () {
+            if (mounted) setState(() {});
+          });
+        }
       }
       await PlaylistService.initialize();
-      Future.delayed(const Duration(milliseconds: 1000), () {
+      if (!mounted) return;
+      Future.delayed(const Duration(milliseconds: 2000), () {
         if (mounted) {
           _scanVideos(background: true);
         }
@@ -73,22 +105,112 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     }
   }
 
+  void _initShareIntentHandling() {
+    _shareMediaSub =
+        ReceiveSharingIntent.instance.getMediaStream().listen((files) {
+      _handleSharedMedia(files);
+    }, onError: (e) {
+      debugPrint('Share intent stream error: $e');
+    });
+
+    ReceiveSharingIntent.instance.getInitialMedia().then((files) {
+      if (files.isNotEmpty) {
+        _handleSharedMedia(files);
+      }
+      ReceiveSharingIntent.instance.reset();
+    }).catchError((e) {
+      debugPrint('Initial share intent error: $e');
+    });
+  }
+
+  void _handleSharedMedia(List<SharedMediaFile> files) {
+    if (files.isEmpty) return;
+    final textFile = files.firstWhere(
+      (f) => f.type == SharedMediaType.text,
+      orElse: () => files.first,
+    );
+    _handleSharedText(textFile.path);
+  }
+
+  void _handleSharedText(String text) {
+    if (!mounted) return;
+    final url = _extractFirstUrl(text);
+    if (url == null) return;
+    setState(() {
+      _videoUrl = url;
+      _videoPath = null;
+    });
+    ReceiveSharingIntent.instance.reset();
+  }
+
+  String? _extractFirstUrl(String text) {
+    final match = RegExp(r'(https?://\S+)').firstMatch(text);
+    if (match == null) return null;
+    final url = match.group(0)?.trim();
+    if (url == null || url.isEmpty) return null;
+    return url;
+  }
+
+  Future<void> _loadStreams({bool showError = false}) async {
+    if (mounted) {
+      setState(() {
+        _isLoadingStreams = true;
+      });
+    }
+    try {
+      final streams = await StreamSourcesService.loadAllStreams();
+      final customStreams = await StreamSourcesService.loadCustomStreams();
+      if (!mounted) return;
+      setState(() {
+        _streamVideos = streams
+            .map(
+              (s) => VideoFile(
+                path: s.url,
+                name: s.title,
+                size: 0,
+                lastModified: DateTime.now(),
+                type: MediaType.streaming,
+              ),
+            )
+            .toList();
+        _customStreamUrls = customStreams.map((s) => s.url.trim()).toSet();
+        if (_currentFilter == 'streaming') {
+          _filteredVideos = _streamVideos;
+        }
+        _isLoadingStreams = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingStreams = false;
+      });
+      if (showError) {
+        _showErrorSnackBar('Failed to load streams');
+      }
+    }
+  }
+
   Future<void> _scanVideos({bool background = false}) async {
     try {
       final videos = await VideoScannerService.scanAllVideos(useCache: false);
-      if (mounted) {
-        setState(() {
-          _localVideos = videos;
-          _organizeVideosByFolders();
-          _applyFilter();
-        });
+      if (!mounted) return;
+      setState(() {
+        _localVideos = videos;
+        _organizeVideosByFolders();
+        _applyFilter();
+      });
 
-        if (!background) {
-          if (videos.isNotEmpty) {
+      if (!background) {
+        if (videos.isNotEmpty) {
+          final now = DateTime.now();
+          if (_lastScanSnackAt == null ||
+              now.difference(_lastScanSnackAt!) >
+                  const Duration(seconds: 8)) {
             _showSuccessSnackBar('Found ${videos.length} files');
-          } else {
-            _showErrorSnackBar('No files found.');
+            _lastScanSnackAt = now;
           }
+        } else {
+          _showErrorSnackBar('No files found.');
         }
       }
     } catch (e) {
@@ -115,6 +237,21 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       _videoPath = videoPath;
       _videoUrl = null;
     });
+  }
+
+  void _playStream(VideoFile video) {
+    setState(() {
+      _videoUrl = video.path;
+      _videoPath = null;
+    });
+  }
+
+  void _playVideoItem(VideoFile video) {
+    if (video.type == MediaType.streaming) {
+      _playStream(video);
+    } else {
+      _playVideo(video.path);
+    }
   }
 
   void _organizeVideosByFolders() {
@@ -152,11 +289,65 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     _showSuccessSnackBar('Video completed');
   }
 
+  Future<void> _performExit() async {
+    if (!mounted) return;
+    try {
+      await SystemNavigator.pop();
+    } catch (e) {
+      debugPrint('Exit error: $e');
+      try {
+        if (!mounted) return;
+        if (Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
+        }
+      } catch (e2) {
+        debugPrint('Navigator exit fallback failed: $e2');
+      }
+    }
+  }
+
+  Future<void> _handleExitRequest() async {
+    if (_videoPath != null || _videoUrl != null) {
+      setState(() {
+        _videoPath = null;
+        _videoUrl = null;
+      });
+      return;
+    }
+
+    final shouldExit =
+        await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Exit App'),
+            content: const Text('Do you want to close the app?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('No'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Yes'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!mounted) return;
+    if (shouldExit) {
+      await _performExit();
+    }
+  }
+
   void _applyFilter() {
     setState(() {
       if (_currentFilter == 'folders') {
         // Show folders list
         _filteredVideos = [];
+      } else if (_currentFilter == 'streaming') {
+        _filteredVideos = _streamVideos;
       } else if (_currentFolderName != null) {
         // Show videos from selected folder
         _filteredVideos = _foldersMap[_currentFolderName] ?? [];
@@ -185,47 +376,238 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     });
   }
 
-  void _onChipTap(String label) {
+  void _onChipTap(String label) async {
     HapticFeedback.lightImpact();
+    if (label == 'Privacy') {
+      final isSetup = await VaultService.isVaultSetup();
+      if (!mounted) return;
+      Navigator.of(context).pushNamed(isSetup ? '/vault-auth' : '/vault-setup');
+      return;
+    }
+    if (label == 'Streaming') {
+      _loadStreams();
+    }
     setState(() {
-      if (label == 'Privacy') {
-        Navigator.of(context).pushNamed('/vault-auth');
-      } else {
-        _currentFilter = label.toLowerCase() == 'all'
-            ? null
-            : label.toLowerCase();
-        _currentFolderName = null;
-        _applyFilter();
-      }
+      _currentFilter =
+          label.toLowerCase() == 'all' ? null : label.toLowerCase();
+      _currentFolderName = null;
+      _applyFilter();
     });
   }
 
   void _showUrlDialog() {
+    _openUrlDialog();
+  }
+
+  Future<void> _moveToVault(VideoFile video) async {
+    if (video.type != MediaType.video) {
+      _showErrorSnackBar('Only video files can be moved to vault');
+      return;
+    }
+
+    final isSetup = await VaultService.isVaultSetup();
+    if (!mounted) return;
+    if (!isSetup) {
+      Navigator.of(context).pushNamed('/vault-setup');
+      return;
+    }
+
+    if (!VaultService.isAuthenticated) {
+      Navigator.of(context).pushNamed('/vault-auth');
+      return;
+    }
+
+    final success = await VaultService.hideVideo(video.path);
+    if (!mounted) return;
+    if (success) {
+      _showSuccessSnackBar('Moved to vault');
+      await _scanVideos(background: true);
+    } else {
+      _showErrorSnackBar('Failed to move to vault');
+    }
+  }
+
+  bool _isValidStreamUrl(String input) {
+    if (input.trim().isEmpty) return false;
+    final normalized =
+        input.contains('://') ? input.trim() : 'https://${input.trim()}';
+    final uri = Uri.tryParse(normalized);
+    if (uri == null) return false;
+    const allowedSchemes = ['http', 'https', 'rtsp', 'rtmp'];
+    return allowedSchemes.contains(uri.scheme);
+  }
+
+  Future<List<String>> _getRecentUrls() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getStringList(_recentUrlsKey) ?? [];
+  }
+
+  Future<void> _saveRecentUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getStringList(_recentUrlsKey) ?? [];
+    final normalized = url.trim();
+    if (normalized.isEmpty) return;
+    final updated = [
+      normalized,
+      ...current.where((u) => u != normalized),
+    ];
+    await prefs.setStringList(
+      _recentUrlsKey,
+      updated.take(_maxRecentUrls).toList(),
+    );
+  }
+
+  Future<void> _removeRecentUrl(String url) async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getStringList(_recentUrlsKey) ?? [];
+    final updated = current.where((u) => u != url).toList();
+    await prefs.setStringList(_recentUrlsKey, updated);
+  }
+
+  Future<void> _clearRecentUrls() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_recentUrlsKey);
+  }
+
+  Future<void> _openUrlDialog() async {
+    final recentUrls = await _getRecentUrls();
+    if (!mounted) return;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Play from URL'),
-        content: TextField(
-          controller: _urlController,
-          decoration: const InputDecoration(
-            hintText: 'Enter video URL',
-            border: OutlineInputBorder(),
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ValueListenableBuilder<TextEditingValue>(
+              valueListenable: _urlController,
+              builder: (context, value, _) {
+                final isValid = _isValidStreamUrl(value.text);
+                return Column(
+                  children: [
+                    TextField(
+                      controller: _urlController,
+                      decoration: InputDecoration(
+                        hintText: 'Enter video or stream URL',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.content_paste),
+                          tooltip: 'Paste',
+                          onPressed: () async {
+                            final data = await Clipboard.getData('text/plain');
+                            final text = data?.text ?? '';
+                            if (text.trim().isEmpty) return;
+                            _urlController.text = text.trim();
+                          },
+                        ),
+                      ),
+                    ),
+                    if (value.text.trim().isNotEmpty && !isValid)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Enter a valid URL (http/https/rtsp/rtmp)',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+            if (recentUrls.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'Recent',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(dialogContext).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              SizedBox(
+                height: 160,
+                child: ListView.builder(
+                  itemCount: recentUrls.length,
+                  itemBuilder: (context, index) {
+                    final url = recentUrls[index];
+                    return ListTile(
+                      dense: true,
+                      title: Text(
+                        url,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: IconButton(
+                        icon: const Icon(Icons.close, size: 18),
+                        onPressed: () async {
+                          await _removeRecentUrl(url);
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
+                          await _openUrlDialog();
+                        },
+                      ),
+                      onTap: () {
+                        _urlController.text = url;
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ],
         ),
         actions: [
+          if (recentUrls.isNotEmpty)
+            TextButton(
+              onPressed: () async {
+                await _clearRecentUrls();
+                if (!dialogContext.mounted) return;
+                Navigator.pop(dialogContext);
+                await _openUrlDialog();
+              },
+              child: const Text('Clear Recent'),
+            ),
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
-              if (_urlController.text.isNotEmpty) {
-                setState(() {
-                  _videoUrl = _urlController.text;
-                  _videoPath = null;
-                });
-                Navigator.pop(context);
+            onPressed: () async {
+              var input = _urlController.text.trim();
+              if (input.isEmpty) {
+                if (!mounted) return;
+                _showErrorSnackBar('Enter a valid URL');
+                return;
               }
+
+              if (!_isValidStreamUrl(input)) {
+                if (!mounted) return;
+                _showErrorSnackBar('Enter a valid stream URL');
+                return;
+              }
+
+              if (!input.contains('://')) {
+                input = 'https://$input';
+              }
+
+              await _saveRecentUrl(input);
+              if (!dialogContext.mounted) return;
+              Navigator.pop(dialogContext);
+              if (!mounted) return;
+              setState(() {
+                _videoUrl = input;
+                _videoPath = null;
+              });
             },
             child: const Text('Play'),
           ),
@@ -442,27 +824,40 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
     final isDark = theme == ThemeMode.dark;
 
     if (_videoPath != null || _videoUrl != null) {
-      return Scaffold(
-        backgroundColor: isDark ? Colors.black : Colors.white,
-        body: NextVideoPlayer(
-          videoUrl: _videoUrl,
-          videoPath: _videoPath,
-          autoPlay: false,
-          looping: false,
-          onVideoEnded: _onVideoEnded,
-          onBackPressed: () {
-            setState(() {
-              _videoPath = null;
-              _videoUrl = null;
-            });
-          },
+      return PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          _handleExitRequest();
+        },
+        child: Scaffold(
+          backgroundColor: isDark ? Colors.black : Colors.white,
+          body: ParthiPlayVideoPlayer(
+            videoUrl: _videoUrl,
+            videoPath: _videoPath,
+            autoPlay: true,
+            looping: false,
+            onVideoEnded: _onVideoEnded,
+            onBackPressed: () {
+              setState(() {
+                _videoPath = null;
+                _videoUrl = null;
+              });
+            },
+          ),
         ),
       );
     }
 
-    return Scaffold(
-      backgroundColor: theme == ThemeMode.dark
-          ? const Color(0xFF0A0A0A)
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        _handleExitRequest();
+      },
+      child: Scaffold(
+        backgroundColor: theme == ThemeMode.dark
+            ? const Color(0xFF0A0A0A)
           : const Color(0xFFF5F5F7),
       appBar: AppBar(
         backgroundColor: theme == ThemeMode.dark
@@ -490,7 +885,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
             const SizedBox(width: 12),
             Flexible(
               child: Text(
-                'NEXT PLAYER',
+                'PARTHI PLAY',
                 style: TextStyle(
                   color: theme == ThemeMode.dark ? Colors.white : Colors.black,
                   fontSize: 24,
@@ -503,6 +898,21 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Settings',
+            icon: Icon(
+              Icons.settings_outlined,
+              color: theme == ThemeMode.dark ? Colors.white70 : Colors.black54,
+            ),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const SettingsScreen(),
+                ),
+              );
+            },
+          ),
           PopupMenuButton<String>(
             icon: Icon(
               Icons.more_vert,
@@ -630,11 +1040,108 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
         ),
       ),
       body: RefreshIndicator(
-        onRefresh: () => _scanVideos(background: false),
+        onRefresh: () async {
+          if (_currentFilter == 'streaming') {
+            await _loadStreams(showError: true);
+          } else {
+            await _scanVideos(background: false);
+          }
+        },
         color: Colors.red.shade600,
         child: _buildContent(),
       ),
+    ),
     );
+  }
+
+  void _showAddStreamDialog() {
+    final nameController = TextEditingController();
+    final urlController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Add Stream'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(
+                labelText: 'Stream name',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                labelText: 'Stream URL (HLS)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () async {
+              final name = nameController.text.trim();
+              final url = urlController.text.trim();
+              final uri = Uri.tryParse(url);
+              if (name.isEmpty || uri == null || !uri.hasScheme) {
+                if (!mounted) return;
+                _showErrorSnackBar('Enter a valid name and URL');
+                return;
+              }
+
+              await StreamSourcesService.addCustomStream(
+                StreamSource(
+                  title: name,
+                  url: url,
+                  isLive: true,
+                ),
+              );
+              if (!dialogContext.mounted) return;
+              Navigator.of(dialogContext).pop();
+              if (!mounted) return;
+              await _loadStreams();
+              _showSuccessSnackBar('Stream added');
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _removeStream(VideoFile video) async {
+    await StreamSourcesService.removeCustomStream(video.path);
+    if (!mounted) return;
+    _showSuccessSnackBar('Stream removed');
+    await _loadStreams();
+  }
+
+  void _generateVisibleThumbnails(List<VideoFile> videos) {
+    final paths = videos
+        .where((v) => v.type == MediaType.video)
+        .map((v) => v.path)
+        .toList();
+    if (paths.isEmpty) {
+      _showErrorSnackBar('No videos to generate thumbnails');
+      return;
+    }
+    ThumbnailService.generateThumbnailsBatch(paths).then((_) {
+      if (mounted) {
+        setState(() {});
+      }
+    }).catchError((e) {
+      debugPrint('Error generating thumbnails: $e');
+    });
+    _showSuccessSnackBar('Generating thumbnails...');
   }
 
   Widget _buildContent() {
@@ -652,9 +1159,13 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       return _buildFoldersList();
     }
 
+    if (_currentFilter == 'streaming') {
+      return _buildStreamingList(displayVideos);
+    }
+
     if (displayVideos.isEmpty) {
       return Center(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(32.0),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -786,6 +1297,28 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                         ),
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _showUrlDialog,
+                      icon: const Icon(Icons.link),
+                      label: const Text('Play URL'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor:
+                            isDark ? Colors.white : Colors.black87,
+                        side: BorderSide(
+                          color: isDark
+                              ? Colors.white54
+                              : Colors.grey.shade400,
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 24,
+                          vertical: 12,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -817,10 +1350,128 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                       color: isDark ? Colors.grey[400] : Colors.grey[600],
                     ),
                   ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: () => _generateVisibleThumbnails(displayVideos),
+                    icon: const Icon(Icons.image_outlined, size: 18),
+                    label: const Text('Thumbnails'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.red.shade600,
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverList(
+            delegate: SliverChildBuilderDelegate((context, index) {
+              final video = displayVideos[index];
+              return _buildVideoListItem(video);
+            }, childCount: displayVideos.length),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStreamingList(List<VideoFile> displayVideos) {
+    final theme = ref.watch(themeModeProvider);
+    final isDark = theme == ThemeMode.dark;
+
+    if (_isLoadingStreams) {
+      return const Center(
+        child: CircularProgressIndicator(),
+      );
+    }
+
+    if (displayVideos.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.sensors_rounded,
+                size: 64,
+                color: isDark ? Colors.grey[400] : Colors.grey[600],
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'No streams available',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Add a free stream to get started',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton(
+                onPressed: _showAddStreamDialog,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.purple.shade600,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: 12,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: const Text('Add Stream'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return CustomScrollView(
+      cacheExtent: 800,
+      slivers: [
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.sensors,
+                  color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${displayVideos.length} streams',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                  ),
+                ),
+                const Spacer(),
+                TextButton.icon(
+                  onPressed: _showAddStreamDialog,
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('Add'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Colors.purple.shade600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
         SliverPadding(
           padding: const EdgeInsets.symmetric(horizontal: 16),
           sliver: SliverList(
@@ -1005,7 +1656,7 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () => _playVideo(video.path),
+          onTap: () => _playVideoItem(video),
           borderRadius: BorderRadius.circular(16),
           child: Padding(
             padding: const EdgeInsets.all(12),
@@ -1040,6 +1691,26 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                         spacing: 8,
                         runSpacing: 4,
                         children: [
+                          if (video.type == MediaType.streaming)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 6,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Text(
+                                'LIVE',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.red,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                            ),
                           Container(
                             padding: const EdgeInsets.symmetric(
                               horizontal: 6,
@@ -1073,7 +1744,9 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                             ),
                           ),
                           Text(
-                            video.formattedSize,
+                            video.type == MediaType.streaming
+                                ? 'Live stream'
+                                : video.formattedSize,
                             style: TextStyle(
                               fontSize: 12,
                               color: isDark
@@ -1086,21 +1759,34 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                     ],
                   ),
                 ),
-                PopupMenuButton<String>(
-                  icon: Icon(
-                    Icons.more_vert,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  ),
-                  onSelected: (value) {
+                    PopupMenuButton<String>(
+                      icon: Icon(
+                        Icons.more_vert,
+                        color: isDark ? Colors.grey[400] : Colors.grey[600],
+                      ),
+                  onSelected: (value) async {
                     switch (value) {
                       case 'play':
-                        _playVideo(video.path);
+                        _playVideoItem(video);
                         break;
                       case 'info':
                         _showVideoInfo(video);
                         break;
+                      case 'vault':
+                        await _moveToVault(video);
+                        break;
+                      case 'remove_stream':
+                        await _removeStream(video);
+                        break;
                       case 'share':
-                        _shareVideo(video);
+                        if (video.type == MediaType.streaming) {
+                          await Clipboard.setData(
+                            ClipboardData(text: video.path),
+                          );
+                          _showSuccessSnackBar('Link copied');
+                        } else {
+                          _shareVideo(video);
+                        }
                         break;
                     }
                   },
@@ -1125,13 +1811,44 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
                         ],
                       ),
                     ),
-                    const PopupMenuItem(
+                    if (video.type == MediaType.video)
+                      const PopupMenuItem(
+                        value: 'vault',
+                        child: Row(
+                          children: [
+                            Icon(Icons.lock_outline),
+                            SizedBox(width: 8),
+                            Text('Move to Vault'),
+                          ],
+                        ),
+                      ),
+                    if (video.type == MediaType.streaming &&
+                        _customStreamUrls.contains(video.path))
+                      const PopupMenuItem(
+                        value: 'remove_stream',
+                        child: Row(
+                          children: [
+                            Icon(Icons.delete_outline),
+                            SizedBox(width: 8),
+                            Text('Remove Stream'),
+                          ],
+                        ),
+                      ),
+                    PopupMenuItem(
                       value: 'share',
                       child: Row(
                         children: [
-                          Icon(Icons.share),
-                          SizedBox(width: 8),
-                          Text('Share'),
+                          Icon(
+                            video.type == MediaType.streaming
+                                ? Icons.link
+                                : Icons.share,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            video.type == MediaType.streaming
+                                ? 'Copy Link'
+                                : 'Share',
+                          ),
                         ],
                       ),
                     ),
@@ -1180,39 +1897,11 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
 
   void _shareVideo(VideoFile video) async {
     try {
-      final videoFile = File(video.path);
+      final shareFile = await ShareService.prepareShareFile(video.path);
+      if (!mounted) return;
 
-      if (!await videoFile.exists()) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Video file not found'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Check file size before sharing (limit to 100MB for performance)
-      final fileSize = await videoFile.length();
-      const maxShareSize = 100 * 1024 * 1024; // 100MB
-
-      if (fileSize > maxShareSize) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Video file too large to share (max 100MB)'),
-              backgroundColor: Colors.orange,
-            ),
-          );
-        }
-        return;
-      }
-
-      // Share the video file
       await Share.shareXFiles(
-        [XFile(video.path)],
+        [shareFile],
         subject: 'Video from Parthi Play',
         text: 'Check out this video: ${video.name}',
       );
@@ -1222,6 +1911,15 @@ class _NextPlayerMainScreenState extends ConsumerState<NextPlayerMainScreen>
           const SnackBar(
             content: Text('Video shared successfully'),
             backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } on ShareException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.message),
+            backgroundColor: Colors.orange,
           ),
         );
       }
@@ -1271,40 +1969,35 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
           _isLoading = false;
         });
       } else {
-        _generateThumbnail();
+        ThumbnailService.generateThumbnailsBatch([widget.videoPath]);
+        _retryLoadThumbnail();
       }
     } else {
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
       });
     }
   }
 
-  Future<void> _generateThumbnail() async {
-    if (widget.videoType != MediaType.video) {
-      setState(() {
-        _isLoading = false;
-      });
-      return;
-    }
-
-    try {
-      final thumbnail = await ThumbnailService.generateThumbnail(
-        widget.videoPath,
-      );
-      if (mounted) {
+  Future<void> _retryLoadThumbnail() async {
+    const retries = 6;
+    for (int i = 0; i < retries; i++) {
+      await Future.delayed(const Duration(milliseconds: 400));
+      final cached = await ThumbnailService.getThumbnailPath(widget.videoPath);
+      if (cached != null) {
+        if (!mounted) return;
         setState(() {
-          _thumbnailPath = thumbnail;
+          _thumbnailPath = cached;
           _isLoading = false;
         });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
+        return;
       }
     }
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   @override
@@ -1347,6 +2040,9 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
                 width: 100,
                 height: 60,
                 fit: BoxFit.cover,
+                cacheWidth: 200,
+                cacheHeight: 120,
+                filterQuality: FilterQuality.low,
                 errorBuilder: (context, error, stackTrace) {
                   return _buildPlaceholder();
                 },

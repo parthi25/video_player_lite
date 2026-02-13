@@ -109,8 +109,8 @@ class PipService {
 
       final params = <String, dynamic>{
         'aspectRatio': aspectRatio,
-        'title': title ?? 'Video Player',
-        'artist': artist ?? 'Next Player',
+        'title': title ?? 'Parthi Play',
+        'artist': artist ?? 'Parthi Play',
         'genre': genre ?? 'Video',
         'albumArt': albumArt,
       };
@@ -162,7 +162,7 @@ class PipService {
         final result =
             await _channel.invokeMethod('enableWebPiP', {
               'aspectRatio': aspectRatio,
-              'title': title ?? 'Video Player',
+              'title': title ?? 'Parthi Play',
             }) ??
             false;
         _isPiPEnabled = result;
@@ -250,8 +250,8 @@ class PipService {
 
       final params = <String, dynamic>{
         'aspectRatio': aspectRatio,
-        'title': title ?? 'Video Player',
-        'artist': artist ?? 'Next Player',
+        'title': title ?? 'Parthi Play',
+        'artist': artist ?? 'Parthi Play',
         'genre': genre ?? 'Video',
       };
 

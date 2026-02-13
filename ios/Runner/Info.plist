@@ -45,6 +45,8 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>AppGroupId</key>
+	<string>group.com.parthi.play</string>
 	<!-- Permissions for video player -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>This app needs access to photo library to select video files for playback.</string>

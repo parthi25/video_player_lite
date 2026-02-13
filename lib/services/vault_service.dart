@@ -1,18 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math';
 import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
 import 'package:encrypt/encrypt.dart' as encrypt;
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'thumbnail_service.dart';
+import 'video_scanner_service.dart';
 
 class VaultVideo {
   final String id;
   final String originalPath;
   final String hiddenPath;
   final String fileName;
+  final String originalExtension;
   final int fileSize;
   final DateTime hiddenDate;
   final String thumbnail;
@@ -25,6 +28,7 @@ class VaultVideo {
     required this.originalPath,
     required this.hiddenPath,
     required this.fileName,
+    required this.originalExtension,
     required this.fileSize,
     required this.hiddenDate,
     required this.thumbnail,
@@ -39,6 +43,7 @@ class VaultVideo {
       'originalPath': originalPath,
       'hiddenPath': hiddenPath,
       'fileName': fileName,
+      'originalExtension': originalExtension,
       'fileSize': fileSize,
       'hiddenDate': hiddenDate.toIso8601String(),
       'thumbnail': thumbnail,
@@ -49,11 +54,17 @@ class VaultVideo {
   }
 
   factory VaultVideo.fromJson(Map<String, dynamic> json) {
+    final fileName = json['fileName'] ?? '';
+    final extension =
+        (json['originalExtension'] ?? '').toString().trim().isNotEmpty
+            ? json['originalExtension'].toString()
+            : _getExtensionFromName(fileName);
     return VaultVideo(
       id: json['id'],
       originalPath: json['originalPath'],
       hiddenPath: json['hiddenPath'],
-      fileName: json['fileName'],
+      fileName: fileName,
+      originalExtension: extension,
       fileSize: json['fileSize'],
       hiddenDate: DateTime.parse(json['hiddenDate']),
       thumbnail: json['thumbnail'] ?? '',
@@ -61,6 +72,12 @@ class VaultVideo {
       checksum: json['checksum'] ?? '',
       isEncrypted: json['isEncrypted'] ?? true,
     );
+  }
+
+  static String _getExtensionFromName(String name) {
+    final parts = name.split('.');
+    if (parts.length <= 1) return '';
+    return parts.last;
   }
 }
 
@@ -77,8 +94,11 @@ class VaultService {
   static const String _securityAnswersKey = 'security_answers';
   static const String _securitySetupKey = 'security_setup_done';
 
-  // Chunk size for file processing (5MB) improves memory usage
-  static const int _chunkSize = 5 * 1024 * 1024;
+  // Chunk size for file processing (8MB) balances speed and memory usage
+  static const int _chunkSize = 8 * 1024 * 1024;
+  static const int _yieldEveryBytes = 32 * 1024 * 1024;
+  static const bool _useEncryption = false;
+  static const String _hiddenExtension = 'vault';
 
   static bool _isInFakeMode = false;
   static bool _isAuthenticated = false;
@@ -254,75 +274,92 @@ class VaultService {
   }
 
   // Enhanced Video Management with Streaming Encryption
-  static Future<bool> hideVideo(String videoPath) async {
+  static Future<bool> hideVideo(
+    String videoPath, {
+    ValueChanged<double>? onProgress,
+  }) async {
     if (!_isAuthenticated) return false;
-
-    RandomAccessFile? sourceRaf;
-    IOSink? destSink;
 
     try {
       final videoFile = File(videoPath);
       if (!await videoFile.exists()) return false;
 
       final videoId = _generateVideoId();
-      final encryptionKey = _generateEncryptionKey();
-      final hiddenFileName = '$videoId${_getFileExtension(videoPath)}';
+      final encryptionKey = _useEncryption ? _generateEncryptionKey() : '';
+      final hiddenFileName = '$videoId.$_hiddenExtension';
       final vaultDir = await _getVaultDirectory();
       final hiddenPath = '${vaultDir.path}/$hiddenFileName';
 
       final sourceSize = await videoFile.length();
-      sourceRaf = await videoFile.open(mode: FileMode.read);
+      String checksum = '';
 
-      final destFile = File(hiddenPath);
-      destSink = destFile.openWrite();
+      if (_useEncryption) {
+        RandomAccessFile? sourceRaf;
+        IOSink? destSink;
+        try {
+          sourceRaf = await videoFile.open(mode: FileMode.read);
+          final destFile = File(hiddenPath);
+          destSink = destFile.openWrite();
 
-      // Checksum
-      final output = AccumulatorSink<Digest>();
-      final checksumSink = sha256.startChunkedConversion(output);
+          final output = AccumulatorSink<Digest>();
+          final checksumSink = sha256.startChunkedConversion(output);
 
-      final key = encrypt.Key.fromBase64(encryptionKey);
-      int bytesRead = 0;
+          final key = encrypt.Key.fromBase64(encryptionKey);
+          final encrypter = encrypt.Encrypter(encrypt.AES(key));
+          int bytesRead = 0;
+          int bytesSinceYield = 0;
 
-      // Buffer for reading is handled by the OS/Stream, but we read fixed chunks manually here
+          while (bytesRead < sourceSize) {
+            final remaining = sourceSize - bytesRead;
+            final toRead = remaining < _chunkSize ? remaining : _chunkSize;
+            final dataBytes = await sourceRaf.read(toRead);
 
-      while (bytesRead < sourceSize) {
-        // Calculate bytes to read
-        final remaining = sourceSize - bytesRead;
-        final toRead = remaining < _chunkSize ? remaining : _chunkSize;
+            checksumSink.add(dataBytes);
 
-        // Read data
-        final dataBytes = await sourceRaf.read(toRead); // Returns Uint8List
+            final iv = encrypt.IV.fromSecureRandom(16);
+            final encrypted = encrypter.encryptBytes(dataBytes, iv: iv);
 
-        // Update Checksum
-        checksumSink.add(dataBytes);
+            final lengthBytes = Uint8List(4);
+            final len = encrypted.bytes.length;
+            ByteData.view(lengthBytes.buffer).setUint32(0, len, Endian.big);
 
-        // Encrypt this chunk independently
-        final iv = encrypt.IV.fromSecureRandom(16);
-        final encrypter = encrypt.Encrypter(encrypt.AES(key));
-        final encrypted = encrypter.encryptBytes(dataBytes, iv: iv);
+            destSink.add(iv.bytes);
+            destSink.add(lengthBytes);
+            destSink.add(encrypted.bytes);
 
-        // Write layout: [IV (16 bytes)][Length of Encrypted Data (4 bytes)][Encrypted Data]
+            bytesRead += toRead;
+            bytesSinceYield += toRead;
 
-        final lengthBytes = Uint8List(4);
-        final len = encrypted.bytes.length;
-        ByteData.view(lengthBytes.buffer).setUint32(0, len, Endian.big);
+            if (onProgress != null && sourceSize > 0) {
+              onProgress(bytesRead / sourceSize);
+            }
 
-        destSink.add(iv.bytes);
-        destSink.add(lengthBytes);
-        destSink.add(encrypted.bytes);
+            if (bytesSinceYield >= _yieldEveryBytes) {
+              bytesSinceYield = 0;
+              await Future.delayed(Duration.zero);
+            }
+          }
 
-        bytesRead += toRead;
+          checksumSink.close();
+          await destSink.flush();
+          await destSink.close();
+          await sourceRaf.close();
 
-        // Yield to event loop to keep UI responsive
-        await Future.delayed(Duration.zero);
+          checksum = output.events.single.toString();
+        } catch (e) {
+          await sourceRaf?.close();
+          await destSink?.close();
+          rethrow;
+        }
+      } else {
+        final moved = await _moveFileToPath(
+          sourceFile: videoFile,
+          destinationPath: hiddenPath,
+          onProgress: onProgress,
+        );
+        if (!moved) return false;
+        onProgress?.call(1.0);
       }
-
-      checksumSink.close();
-      await destSink.flush();
-      await destSink.close();
-      await sourceRaf.close();
-
-      final checksum = output.events.single.toString();
 
       // Create vault video object
       final vaultVideo = VaultVideo(
@@ -330,122 +367,62 @@ class VaultService {
         originalPath: videoPath,
         hiddenPath: hiddenPath,
         fileName: videoFile.uri.pathSegments.last,
+        originalExtension: path.extension(videoPath).replaceFirst('.', ''),
         fileSize: sourceSize,
         hiddenDate: DateTime.now(),
         thumbnail: await _generateThumbnail(videoPath, encryptionKey),
         encryptionKey: encryptionKey,
         checksum: checksum,
-        isEncrypted: true,
+        isEncrypted: _useEncryption,
       );
 
       await _saveVideoToVault(vaultVideo);
-      await _secureDelete(videoFile);
 
+      await VideoScannerService.removeFromCache(videoPath);
+      await ThumbnailService.deleteThumbnail(videoPath);
+
+      onProgress?.call(1.0);
       debugPrint('Video securely hidden: ${vaultVideo.fileName}');
       return true;
     } catch (e) {
       debugPrint('Error hiding video: $e');
-      // Cleanup
-      try {
-        await sourceRaf?.close();
-        await destSink?.close();
-      } catch (e2) {
-        // Ignore cleanup errors
-      }
       return false;
     }
   }
 
-  static Future<bool> unhideVideo(String videoId) async {
+  static Future<bool> unhideVideo(
+    String videoId, {
+    ValueChanged<double>? onProgress,
+  }) async {
     if (!_isAuthenticated) return false;
-
-    RandomAccessFile? hiddenRaf;
-    IOSink? destSink;
 
     try {
       final videos = await _getVaultVideos();
       final video = videos.firstWhere((v) => v.id == videoId);
-      final hiddenFile = File(video.hiddenPath);
+      bool success = false;
 
-      if (!await hiddenFile.exists()) return false;
-
-      final key = encrypt.Key.fromBase64(video.encryptionKey);
-
-      hiddenRaf = await hiddenFile.open(mode: FileMode.read);
-      final hiddenSize = await hiddenFile.length();
-
-      final destFile = File(video.originalPath);
-      // Ensure directory exists
-      final destDir = destFile.parent;
-      if (!await destDir.exists()) {
-        await destDir.create(recursive: true);
-      }
-
-      destSink = destFile.openWrite();
-
-      // Checksum verifier
-      final output = AccumulatorSink<Digest>();
-      final checksumSink = sha256.startChunkedConversion(output);
-
-      int bytesProcessed = 0;
-
-      while (bytesProcessed < hiddenSize) {
-        // Read IV (16 bytes)
-        // Format: [IV (16 bytes)][Length (4 bytes)][Data]
-
-        if (hiddenSize - bytesProcessed < 20) break;
-
-        final ivBytes = await hiddenRaf.read(16);
-        final lenBytes = await hiddenRaf.read(4);
-
-        final encryptedLen = ByteData.view(
-          lenBytes.buffer,
-        ).getUint32(0, Endian.big);
-
-        final encryptedData = await hiddenRaf.read(encryptedLen);
-
-        final iv = encrypt.IV(ivBytes);
-        final encrypter = encrypt.Encrypter(encrypt.AES(key));
-
-        final decryptedBytes = encrypter.decryptBytes(
-          encrypt.Encrypted(encryptedData),
-          iv: iv,
+      if (video.isEncrypted) {
+        success = await _decryptVideoToPath(
+          video,
+          video.originalPath,
+          onProgress: onProgress,
         );
-
-        // Write to file
-        destSink.add(decryptedBytes);
-
-        // Add to checksum calculation
-        checksumSink.add(decryptedBytes);
-
-        bytesProcessed += 16 + 4 + encryptedLen;
-
-        await Future.delayed(Duration.zero);
+      } else {
+        success = await _moveFileToPath(
+          sourceFile: File(video.hiddenPath),
+          destinationPath: video.originalPath,
+          onProgress: onProgress,
+        );
       }
 
-      await destSink.flush();
-      await destSink.close();
-      await hiddenRaf.close();
+      if (!success) return false;
 
-      checksumSink.close();
-      final calculatedChecksum = output.events.single.toString();
-
-      if (calculatedChecksum != video.checksum) {
-        debugPrint('Checksum mismatch! Video might be corrupted.');
-        // In strictly secure apps we might delete, but here preventing data loss is priority
-        // return false;
-      }
-
-      // Cleanup
-      await hiddenFile.delete();
       await _removeVideoFromVault(videoId);
 
       debugPrint('Video securely unhidden: ${video.fileName}');
       return true;
     } catch (e) {
       debugPrint('Error unhiding video: $e');
-      await hiddenRaf?.close();
-      await destSink?.close();
       return false;
     }
   }
@@ -468,11 +445,6 @@ class VaultService {
     return '${timestamp}_$random';
   }
 
-  static String _getFileExtension(String filePath) {
-    return filePath.contains('.')
-        ? filePath.substring(filePath.lastIndexOf('.'))
-        : '.mp4';
-  }
 
   static Future<Directory> _getVaultDirectory() async {
     final appDir = await getApplicationDocumentsDirectory();
@@ -482,6 +454,7 @@ class VaultService {
     if (!await vaultDir.exists()) {
       await vaultDir.create(recursive: true);
     }
+    await _ensureNoMediaFile(vaultDir);
 
     return vaultDir;
   }
@@ -498,6 +471,20 @@ class VaultService {
 
     if (!await fakeVaultDir.exists()) {
       await fakeVaultDir.create(recursive: true);
+    }
+
+    await _ensureNoMediaFile(mainVaultDir);
+    await _ensureNoMediaFile(fakeVaultDir);
+  }
+
+  static Future<void> _ensureNoMediaFile(Directory dir) async {
+    try {
+      final noMedia = File(path.join(dir.path, '.nomedia'));
+      if (!await noMedia.exists()) {
+        await noMedia.writeAsString('');
+      }
+    } catch (e) {
+      debugPrint('Error creating .nomedia file: $e');
     }
   }
 
@@ -539,41 +526,7 @@ class VaultService {
     return key.base64;
   }
 
-  static Future<void> _secureDelete(File file) async {
-    try {
-      if (!await file.exists()) return;
 
-      // Quick overwrite for performance (just header or small chunks in real large files, but here we do 3 passes on smaller files)
-      // For large video files, full overwrite is too slow.
-      // We will just rename and delete, or overwrite the first 1MB.
-
-      final length = await file.length();
-      final overwriteSize = length < 1024 * 1024
-          ? length
-          : 1024 * 1024; // Overwrite first 1MB
-
-      if (overwriteSize > 0) {
-        final raf = await file.open(mode: FileMode.write);
-        final random = Random.secure();
-        final randomData = List<int>.generate(
-          overwriteSize.toInt(),
-          (_) => random.nextInt(256),
-        );
-        await raf.writeFrom(randomData);
-        await raf.close();
-      }
-
-      await file.delete();
-      debugPrint('File deleted: ${file.path}');
-    } catch (e) {
-      debugPrint('Secure delete error: $e');
-      try {
-        await file.delete();
-      } catch (deleteError) {
-        debugPrint('Fallback delete also failed: $deleteError');
-      }
-    }
-  }
 
   // Legacy/Helper
   static Future<bool> deleteFromVault(String videoId) async {
@@ -752,4 +705,382 @@ class VaultService {
       return '';
     }
   }
+
+  static Future<String?> exportVideoForSharing(VaultVideo video) async {
+    if (!_isAuthenticated) return null;
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final exportPath = path.join(tempDir.path, 'shared_${video.fileName}');
+      final exportFile = File(exportPath);
+
+      if (await exportFile.exists()) {
+        await exportFile.delete();
+      }
+
+      final success = video.isEncrypted
+          ? await _decryptVideoToPath(video, exportPath)
+          : await _copyVideoToPath(
+              sourcePath: video.hiddenPath,
+              destinationPath: exportPath,
+            );
+      if (!success) return null;
+
+      return exportPath;
+    } catch (e) {
+      debugPrint('Error exporting video for sharing: $e');
+      return null;
+    }
+  }
+
+  static Future<String?> exportVideoForPlayback(
+    VaultVideo video, {
+    ValueChanged<double>? onProgress,
+  }) async {
+    if (!_isAuthenticated) return null;
+
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final exportPath = path.join(tempDir.path, 'vault_play_${video.fileName}');
+      final exportFile = File(exportPath);
+
+      if (await exportFile.exists()) {
+        await exportFile.delete();
+      }
+
+      final success = video.isEncrypted
+          ? await _decryptVideoToPath(
+              video,
+              exportPath,
+              onProgress: onProgress,
+            )
+          : await _copyVideoToPath(
+              sourcePath: video.hiddenPath,
+              destinationPath: exportPath,
+              onProgress: onProgress,
+            );
+      if (!success) return null;
+
+      return exportPath;
+    } catch (e) {
+      debugPrint('Error exporting video for playback: $e');
+      return null;
+    }
+  }
+
+  static Future<bool> _decryptVideoToPath(
+    VaultVideo video,
+    String destinationPath, {
+    ValueChanged<double>? onProgress,
+  }
+  ) async {
+    RandomAccessFile? hiddenRaf;
+    IOSink? destSink;
+    File? destFile;
+
+    try {
+      final hiddenFile = File(video.hiddenPath);
+      if (!await hiddenFile.exists()) return false;
+
+      final key = encrypt.Key.fromBase64(video.encryptionKey);
+      final encrypter = encrypt.Encrypter(encrypt.AES(key));
+
+      hiddenRaf = await hiddenFile.open(mode: FileMode.read);
+      final hiddenSize = await hiddenFile.length();
+
+      destFile = File(destinationPath);
+      final destDir = destFile.parent;
+      if (!await destDir.exists()) {
+        await destDir.create(recursive: true);
+      }
+      destSink = destFile.openWrite();
+
+      final output = AccumulatorSink<Digest>();
+      final checksumSink = sha256.startChunkedConversion(output);
+
+      int bytesProcessed = 0;
+      int bytesSinceYield = 0;
+
+      while (bytesProcessed < hiddenSize) {
+        if (hiddenSize - bytesProcessed < 20) break;
+
+        final ivBytes = await hiddenRaf.read(16);
+        final lenBytes = await hiddenRaf.read(4);
+
+        final encryptedLen = ByteData.view(
+          lenBytes.buffer,
+        ).getUint32(0, Endian.big);
+
+        final encryptedData = await hiddenRaf.read(encryptedLen);
+
+        final iv = encrypt.IV(ivBytes);
+        final decryptedBytes = encrypter.decryptBytes(
+          encrypt.Encrypted(encryptedData),
+          iv: iv,
+        );
+
+        destSink.add(decryptedBytes);
+        checksumSink.add(decryptedBytes);
+
+        bytesProcessed += 16 + 4 + encryptedLen;
+        bytesSinceYield += 16 + 4 + encryptedLen;
+
+        if (onProgress != null && hiddenSize > 0) {
+          onProgress(bytesProcessed / hiddenSize);
+        }
+
+        if (bytesSinceYield >= _yieldEveryBytes) {
+          bytesSinceYield = 0;
+          await Future.delayed(Duration.zero);
+        }
+      }
+
+      await destSink.flush();
+      await destSink.close();
+      await hiddenRaf.close();
+
+      checksumSink.close();
+      final calculatedChecksum = output.events.single.toString();
+
+      if (calculatedChecksum != video.checksum) {
+        debugPrint('Checksum mismatch! Video might be corrupted.');
+      }
+
+      onProgress?.call(1.0);
+      return true;
+    } catch (e) {
+      debugPrint('Error decrypting video: $e');
+      try {
+        await destSink?.close();
+        await hiddenRaf?.close();
+        if (destFile != null && await destFile.exists()) {
+          await destFile.delete();
+        }
+      } catch (_) {
+        // ignore cleanup errors
+      }
+      return false;
+    }
+  }
+
+  static Future<bool> _copyVideoToPath({
+    required String sourcePath,
+    required String destinationPath,
+    ValueChanged<double>? onProgress,
+  }) async {
+    RandomAccessFile? sourceRaf;
+    IOSink? destSink;
+    File? destFile;
+
+    try {
+      final sourceFile = File(sourcePath);
+      if (!await sourceFile.exists()) return false;
+
+      final sourceSize = await sourceFile.length();
+      sourceRaf = await sourceFile.open(mode: FileMode.read);
+
+      destFile = File(destinationPath);
+      final destDir = destFile.parent;
+      if (!await destDir.exists()) {
+        await destDir.create(recursive: true);
+      }
+      destSink = destFile.openWrite();
+
+      int bytesRead = 0;
+      int bytesSinceYield = 0;
+
+      while (bytesRead < sourceSize) {
+        final remaining = sourceSize - bytesRead;
+        final toRead = remaining < _chunkSize ? remaining : _chunkSize;
+        final dataBytes = await sourceRaf.read(toRead);
+
+        destSink.add(dataBytes);
+
+        bytesRead += toRead;
+        bytesSinceYield += toRead;
+
+        if (onProgress != null && sourceSize > 0) {
+          onProgress(bytesRead / sourceSize);
+        }
+
+        if (bytesSinceYield >= _yieldEveryBytes) {
+          bytesSinceYield = 0;
+          await Future.delayed(Duration.zero);
+        }
+      }
+
+      await destSink.flush();
+      await destSink.close();
+      await sourceRaf.close();
+
+      onProgress?.call(1.0);
+      return true;
+    } catch (e) {
+      debugPrint('Error copying video: $e');
+      try {
+        await destSink?.close();
+        await sourceRaf?.close();
+        if (destFile != null && await destFile.exists()) {
+          await destFile.delete();
+        }
+      } catch (_) {
+        // ignore cleanup errors
+      }
+      return false;
+    }
+  }
+
+  static Future<bool> _moveFileToPath({
+    required File sourceFile,
+    required String destinationPath,
+    ValueChanged<double>? onProgress,
+  }) async {
+    try {
+      final destFile = File(destinationPath);
+      final destDir = destFile.parent;
+      if (!await destDir.exists()) {
+        await destDir.create(recursive: true);
+      }
+
+      try {
+        await sourceFile.rename(destinationPath);
+        onProgress?.call(1.0);
+        return true;
+      } catch (_) {
+        final copied = await _copyVideoToPath(
+          sourcePath: sourceFile.path,
+          destinationPath: destinationPath,
+          onProgress: onProgress,
+        );
+        if (!copied) return false;
+
+        try {
+          await sourceFile.delete();
+        } catch (_) {
+          // If we can't delete, treat as failure to avoid leaving duplicates
+          return false;
+        }
+
+        return true;
+      }
+    } catch (e) {
+      debugPrint('Error moving video: $e');
+      return false;
+    }
+  }
+
+  static Future<VaultPlaybackHandle> prepareDirectPlayback(
+    VaultVideo video,
+  ) async {
+    final hiddenFile = File(video.hiddenPath);
+    if (!await hiddenFile.exists()) {
+      return VaultPlaybackHandle(video.hiddenPath, video.hiddenPath);
+    }
+
+    final extension = video.originalExtension.trim();
+    if (extension.isEmpty) {
+      return VaultPlaybackHandle(video.hiddenPath, video.hiddenPath);
+    }
+
+    final currentExt = path.extension(video.hiddenPath).replaceFirst('.', '');
+    if (currentExt.toLowerCase() == extension.toLowerCase()) {
+      return VaultPlaybackHandle(video.hiddenPath, video.hiddenPath);
+    }
+
+    final renamedPath = path.join(
+      hiddenFile.parent.path,
+      '${video.id}.$extension',
+    );
+    final tempPlaybackDir = Directory(
+      path.join(hiddenFile.parent.path, 'playback_temp'),
+    );
+    try {
+      if (!await tempPlaybackDir.exists()) {
+        await tempPlaybackDir.create(recursive: true);
+      }
+      await _ensureNoMediaFile(tempPlaybackDir);
+    } catch (e) {
+      debugPrint('Error preparing playback temp directory: $e');
+    }
+    final tempPlaybackPath = path.join(
+      tempPlaybackDir.path,
+      '${video.id}.$extension',
+    );
+
+    try {
+      // Try to open for read to detect obvious locks before rename.
+      final raf = await hiddenFile.open(mode: FileMode.read);
+      await raf.close();
+      final renamedFile = await hiddenFile.rename(renamedPath);
+      return VaultPlaybackHandle(renamedFile.path, video.hiddenPath);
+    } catch (e) {
+      debugPrint('Error renaming vault file for playback: $e');
+      try {
+        final copied = await hiddenFile.copy(tempPlaybackPath);
+        return VaultPlaybackHandle(
+          copied.path,
+          video.hiddenPath,
+          renameFailed: true,
+          copyCreated: true,
+        );
+      } catch (copyError) {
+        debugPrint('Error copying vault file for playback: $copyError');
+        return VaultPlaybackHandle(
+          video.hiddenPath,
+          video.hiddenPath,
+          renameFailed: true,
+        );
+      }
+    }
+  }
+
+  static Future<void> restoreDirectPlayback(VaultPlaybackHandle handle) async {
+    if (handle.playPath == handle.originalHiddenPath) return;
+    try {
+      final current = File(handle.playPath);
+      if (await current.exists()) {
+        if (handle.copyCreated) {
+          await current.delete();
+        } else {
+          await current.rename(handle.originalHiddenPath);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error restoring vault file name: $e');
+    }
+  }
+
+  static Future<void> cleanupPlaybackTempFiles() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final mainTempDir = Directory(
+        path.join(appDir.path, 'main_vault', 'playback_temp'),
+      );
+      final fakeTempDir = Directory(
+        path.join(appDir.path, 'fake_vault', 'playback_temp'),
+      );
+
+      for (final dir in [mainTempDir, fakeTempDir]) {
+        if (await dir.exists()) {
+          await dir.delete(recursive: true);
+        }
+      }
+    } catch (e) {
+      debugPrint('Error cleaning playback temp files: $e');
+    }
+  }
+}
+
+class VaultPlaybackHandle {
+  final String playPath;
+  final String originalHiddenPath;
+  final bool renameFailed;
+  final bool copyCreated;
+
+  const VaultPlaybackHandle(
+    this.playPath,
+    this.originalHiddenPath, {
+    this.renameFailed = false,
+    this.copyCreated = false,
+  });
 }
