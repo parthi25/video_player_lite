@@ -286,6 +286,7 @@ class _VideoItemThumbnail extends StatefulWidget {
 class _VideoItemThumbnailState extends State<_VideoItemThumbnail> {
   String? _thumbnailPath;
   bool _isLoading = true;
+  bool _thumbnailExists = false;
 
   @override
   void initState() {
@@ -305,12 +306,17 @@ class _VideoItemThumbnailState extends State<_VideoItemThumbnail> {
     final cached = await ThumbnailService.getThumbnailPath(
       widget.videoFile.path,
     );
-    if (cached != null && mounted) {
-      setState(() {
-        _thumbnailPath = cached;
-        _isLoading = false;
-      });
-      return;
+    if (cached != null) {
+      final exists = await File(cached).exists();
+      if (!mounted) return;
+      if (exists) {
+        setState(() {
+          _thumbnailPath = cached;
+          _thumbnailExists = true;
+          _isLoading = false;
+        });
+        return;
+      }
     }
     if (!mounted) return;
     ThumbnailService.generateThumbnailsBatch([widget.videoFile.path]);
@@ -324,14 +330,16 @@ class _VideoItemThumbnailState extends State<_VideoItemThumbnail> {
       final cached = await ThumbnailService.getThumbnailPath(
         widget.videoFile.path,
       );
-      if (cached != null) {
-        if (!mounted) return;
-        setState(() {
-          _thumbnailPath = cached;
-          _isLoading = false;
-        });
-        return;
-      }
+      if (cached == null) continue;
+      final exists = await File(cached).exists();
+      if (!mounted) return;
+      if (!exists) continue;
+      setState(() {
+        _thumbnailPath = cached;
+        _thumbnailExists = true;
+        _isLoading = false;
+      });
+      return;
     }
     if (!mounted) return;
     setState(() {
@@ -371,7 +379,7 @@ class _VideoItemThumbnailState extends State<_VideoItemThumbnail> {
           ),
         ],
       ),
-      child: _thumbnailPath != null && File(_thumbnailPath!).existsSync()
+      child: _thumbnailExists
           ? ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Image.file(

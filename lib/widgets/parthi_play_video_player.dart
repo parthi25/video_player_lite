@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/scheduler.dart';
@@ -8,6 +9,7 @@ import '../core/video_player_controller.dart';
 import '../services/performance_service.dart';
 import '../services/system_controls_service.dart';
 import '../services/playback_history_service.dart';
+import '../services/settings_service.dart';
 import 'parthi_play_controls.dart';
 import 'parthi_play_gesture_detector.dart';
 import 'subtitle_display_widget.dart';
@@ -39,6 +41,7 @@ class ParthiPlayVideoPlayer extends ConsumerStatefulWidget {
 class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
     with WidgetsBindingObserver {
   VideoPlayerControllerNotifier? _videoController;
+  StateController<VoidCallback?>? _backCallbackController;
   static const MethodChannel _orientationChannel =
       MethodChannel('parthi_play/orientation');
   StreamSubscription<void>? _performanceSettingsSubscription;
@@ -50,6 +53,9 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
   static const Duration _autoPerfCooldown = Duration(seconds: 12);
   PlayerOrientation? _lastAutoOrientation;
   Timer? _orientationRetryTimer;
+  bool _backgroundPlayEnabled = false;
+  StreamSubscription<void>? _settingsSubscription;
+  String? _resumePromptForPath;
 
   @override
   void initState() {
@@ -57,6 +63,9 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
     PerformanceService.initialize();
     PerformanceService.optimizeForVideoPlayback();
     WidgetsBinding.instance.addObserver(this);
+    _backCallbackController = ref.read(
+      videoPlayerBackCallbackProvider.notifier,
+    );
     // Ensure auto-rotate is enabled on the player screen by default.
     _applyOrientationWithRetry(PlayerOrientation.auto);
 
@@ -64,8 +73,7 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
       if (mounted) {
         _videoController = ref.read(videoPlayerControllerProvider.notifier);
         if (widget.onBackPressed != null) {
-          ref.read(videoPlayerBackCallbackProvider.notifier).state =
-              widget.onBackPressed;
+          _backCallbackController?.state = widget.onBackPressed;
         }
         _initializeVideo();
 
@@ -78,6 +86,11 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
       _updateAutoPerformanceMonitoring();
       _applyRuntimePerformanceSettings();
     });
+
+    _loadBackgroundPlayPreference();
+    _settingsSubscription = SettingsService.changes.listen((_) {
+      _loadBackgroundPlayPreference();
+    });
   }
 
   @override
@@ -88,8 +101,9 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
     _stopAutoPerformanceMonitoring();
     _performanceSettingsSubscription?.cancel();
     _performanceSettingsSubscription = null;
+    _settingsSubscription?.cancel();
+    _settingsSubscription = null;
     try {
-      ref.read(videoPlayerBackCallbackProvider.notifier).state = null;
       _videoController?.reset();
     } catch (e) {
       debugPrint('Error in dispose: $e');
@@ -103,8 +117,10 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.inactive) {
-      _videoController?.pause();
       final videoState = ref.read(videoPlayerControllerProvider);
+      if (!videoState.isInPip && !_backgroundPlayEnabled) {
+        _videoController?.pause();
+      }
       if (videoState.videoPath != null) {
         PlaybackHistoryService.savePosition(
           videoState.videoPath!,
@@ -120,6 +136,7 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
   }
 
   Future<void> _handleBack() async {
+    _backCallbackController?.state = null;
     if (_videoController != null) {
       await _videoController!.pause();
       await _videoController!.reset();
@@ -134,7 +151,7 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
     }
   }
 
-  void _initializeVideo() {
+  Future<void> _initializeVideo() async {
     if (_videoController == null) {
       debugPrint('Video controller not initialized yet');
       return;
@@ -146,10 +163,15 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
       if (!videoState.isInitialized &&
           (widget.videoUrl != null || widget.videoPath != null) &&
           videoState.player == null) {
-        _videoController!.initializeVideo(
+        Duration? startPosition;
+        if (widget.videoPath != null) {
+          startPosition = await _resolveStartPosition(widget.videoPath!);
+        }
+        await _videoController!.initializeVideo(
           widget.videoUrl,
           widget.videoPath,
           autoPlay: widget.autoPlay,
+          startPosition: startPosition,
         );
       }
     } catch (e, stackTrace) {
@@ -159,6 +181,61 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
 
     _updateAutoPerformanceMonitoring();
     _applyRuntimePerformanceSettings();
+  }
+
+  Future<void> _loadBackgroundPlayPreference() async {
+    final enabled = await SettingsService.getBackgroundPlaybackEnabled(
+      isIOS: Platform.isIOS,
+    );
+    if (!mounted) return;
+    setState(() {
+      _backgroundPlayEnabled = enabled;
+    });
+  }
+
+  Future<Duration?> _resolveStartPosition(String videoPath) async {
+    if (_resumePromptForPath == videoPath) return null;
+    final savedPosition = await PlaybackHistoryService.getPosition(videoPath);
+    if (savedPosition.inSeconds <= 5) return null;
+
+    _resumePromptForPath = videoPath;
+    if (!mounted) return null;
+    final resume = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Resume playback?'),
+        content: Text(
+          'Continue from ${_formatDuration(savedPosition)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Start Over'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Resume'),
+          ),
+        ],
+      ),
+    );
+
+    if (resume == true) return savedPosition;
+    if (resume == false) {
+      await PlaybackHistoryService.clearPosition(videoPath);
+    }
+    return null;
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = duration.inMinutes.remainder(60);
+    final seconds = duration.inSeconds.remainder(60);
+    if (hours > 0) {
+      return '$hours:${twoDigits(minutes)}:${twoDigits(seconds)}';
+    }
+    return '${twoDigits(minutes)}:${twoDigits(seconds)}';
   }
 
   void _applyRuntimePerformanceSettings() {
@@ -371,6 +448,9 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
     final bool isInPip = ref.watch(
       videoPlayerControllerProvider.select((s) => s.isInPip),
     );
+    final bool isPlaying = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isPlaying),
+    );
 
     // Use a separate ProviderScope or select for orientation to avoid full rebuilds
     // Note: Orientation is handled by strict listener above, so we don't need to watch it here
@@ -456,7 +536,7 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
                         ),
                       ),
                     ),
-                    if (!isInPip)
+                  if (!isInPip)
                       Positioned.fill(
                         child: Consumer(
                           builder: (context, ref, child) {
@@ -470,7 +550,7 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
                           },
                         ),
                       ),
-                    if (!isInPip)
+                  if (!isInPip)
                       Positioned.fill(
                         child: Consumer(
                           builder: (context, ref, child) {
@@ -499,6 +579,28 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
                               subtitles: subtitles,
                             );
                           },
+                        ),
+                      ),
+                    if (isInPip)
+                      Positioned(
+                        right: 12,
+                        bottom: 12,
+                        child: Material(
+                          color: Colors.black45,
+                          shape: const CircleBorder(),
+                          child: IconButton(
+                            icon: Icon(
+                              isPlaying ? Icons.pause : Icons.play_arrow,
+                              color: Colors.white,
+                            ),
+                            onPressed: () {
+                              ref
+                                  .read(
+                                    videoPlayerControllerProvider.notifier,
+                                  )
+                                  .togglePlayPause();
+                            },
+                          ),
                         ),
                       ),
                   ],
@@ -538,11 +640,47 @@ class _ParthiPlayVideoPlayerState extends ConsumerState<ParthiPlayVideoPlayer>
   }
 
   Widget _buildLoadingIndicator() {
+    final isResolving = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.isResolvingStream),
+    );
+    final message = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.resolvingMessage),
+    );
+    final progress = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.resolvingProgress),
+    );
+
     return Container(
       color: Colors.black,
-      child: const Center(
-        child: CircularProgressIndicator(
-          valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(
+              valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+            ),
+            if (isResolving) ...[
+              const SizedBox(height: 12),
+              Text(
+                message ?? 'Loading stream...',
+                style: const TextStyle(color: Colors.white),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: 220,
+                child: LinearProgressIndicator(
+                  value: progress > 0 ? progress : null,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.red),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '${(progress.clamp(0.0, 1.0) * 100).round()}%',
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
+              ),
+            ],
+          ],
         ),
       ),
     );

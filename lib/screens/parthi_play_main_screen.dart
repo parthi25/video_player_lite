@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:next_gen_video_player/services/vault_service.dart';
@@ -82,16 +83,6 @@ class _ParthiPlayMainScreenState extends ConsumerState<ParthiPlayMainScreen>
           _localVideos = cachedVideos;
           _filteredVideos = cachedVideos;
         });
-        final cachedPaths = cachedVideos
-            .where((v) => v.type == MediaType.video)
-            .map((v) => v.path)
-            .toList();
-        if (cachedPaths.isNotEmpty) {
-          ThumbnailService.generateThumbnailsBatch(cachedPaths);
-          Future.delayed(const Duration(milliseconds: 800), () {
-            if (mounted) setState(() {});
-          });
-        }
       }
       await PlaylistService.initialize();
       if (!mounted) return;
@@ -1328,51 +1319,61 @@ class _ParthiPlayMainScreenState extends ConsumerState<ParthiPlayMainScreen>
       );
     }
 
-    return CustomScrollView(
-      slivers: [
-        if (_localVideos.isNotEmpty)
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.video_library,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${displayVideos.length} ${displayVideos.length == 1 ? 'video' : 'videos'}',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is UserScrollNotification) {
+          ThumbnailService.setPausedDebounced(
+            notification.direction != ScrollDirection.idle,
+          );
+        }
+        return false;
+      },
+      child: CustomScrollView(
+        slivers: [
+          if (_localVideos.isNotEmpty)
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.video_library,
                       color: isDark ? Colors.grey[400] : Colors.grey[600],
+                      size: 20,
                     ),
-                  ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: () => _generateVisibleThumbnails(displayVideos),
-                    icon: const Icon(Icons.image_outlined, size: 18),
-                    label: const Text('Thumbnails'),
-                    style: TextButton.styleFrom(
-                      foregroundColor: Colors.red.shade600,
+                    const SizedBox(width: 8),
+                    Text(
+                      '${displayVideos.length} ${displayVideos.length == 1 ? 'video' : 'videos'}',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: isDark ? Colors.grey[400] : Colors.grey[600],
+                      ),
                     ),
-                  ),
-                ],
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: () => _generateVisibleThumbnails(displayVideos),
+                      icon: const Icon(Icons.image_outlined, size: 18),
+                      label: const Text('Thumbnails'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.red.shade600,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final video = displayVideos[index];
+                return _buildVideoListItem(video);
+              }, childCount: displayVideos.length),
+            ),
           ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final video = displayVideos[index];
-              return _buildVideoListItem(video);
-            }, childCount: displayVideos.length),
-          ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1437,51 +1438,61 @@ class _ParthiPlayMainScreenState extends ConsumerState<ParthiPlayMainScreen>
       );
     }
 
-    return CustomScrollView(
-      cacheExtent: 800,
-      slivers: [
-        SliverToBoxAdapter(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.sensors,
-                  color: isDark ? Colors.grey[400] : Colors.grey[600],
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '${displayVideos.length} streams',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+    return NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification is UserScrollNotification) {
+          ThumbnailService.setPausedDebounced(
+            notification.direction != ScrollDirection.idle,
+          );
+        }
+        return false;
+      },
+      child: CustomScrollView(
+        cacheExtent: 800,
+        slivers: [
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.sensors,
                     color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    size: 20,
                   ),
-                ),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: _showAddStreamDialog,
-                  icon: const Icon(Icons.add, size: 18),
-                  label: const Text('Add'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: Colors.purple.shade600,
+                  const SizedBox(width: 8),
+                  Text(
+                    '${displayVideos.length} streams',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    ),
                   ),
-                ),
-              ],
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _showAddStreamDialog,
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add'),
+                    style: TextButton.styleFrom(
+                      foregroundColor: Colors.purple.shade600,
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-        SliverPadding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          sliver: SliverList(
-            delegate: SliverChildBuilderDelegate((context, index) {
-              final video = displayVideos[index];
-              return _buildVideoListItem(video);
-            }, childCount: displayVideos.length),
+          SliverPadding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            sliver: SliverList(
+              delegate: SliverChildBuilderDelegate((context, index) {
+                final video = displayVideos[index];
+                return _buildVideoListItem(video);
+              }, childCount: displayVideos.length),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -1525,20 +1536,7 @@ class _ParthiPlayMainScreenState extends ConsumerState<ParthiPlayMainScreen>
         pressElevation: 2,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        avatar: isActive
-            ? Container(
-                padding: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.2),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(
-                  icon,
-                  size: 14,
-                  color: isDark ? Colors.white : color,
-                ),
-              )
-            : null,
+        avatar: null,
       ),
     );
   }
@@ -1641,6 +1639,7 @@ class _ParthiPlayMainScreenState extends ConsumerState<ParthiPlayMainScreen>
     final isDark = theme == ThemeMode.dark;
 
     return Container(
+      key: ValueKey(video.path),
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1A1A1A) : Colors.white,
@@ -1953,6 +1952,7 @@ class _VideoThumbnailWidget extends StatefulWidget {
 class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
   String? _thumbnailPath;
   bool _isLoading = true;
+  bool _thumbnailExists = false;
 
   @override
   void initState() {
@@ -1963,12 +1963,19 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
   Future<void> _loadThumbnail() async {
     if (widget.videoType == MediaType.video) {
       final cached = await ThumbnailService.getThumbnailPath(widget.videoPath);
-      if (cached != null && mounted) {
-        setState(() {
-          _thumbnailPath = cached;
-          _isLoading = false;
-        });
-      } else {
+      if (cached != null) {
+        final exists = await File(cached).exists();
+        if (!mounted) return;
+        if (exists) {
+          setState(() {
+            _thumbnailPath = cached;
+            _thumbnailExists = true;
+            _isLoading = false;
+          });
+          return;
+        }
+      }
+      if (mounted) {
         ThumbnailService.generateThumbnailsBatch([widget.videoPath]);
         _retryLoadThumbnail();
       }
@@ -1985,14 +1992,16 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
     for (int i = 0; i < retries; i++) {
       await Future.delayed(const Duration(milliseconds: 400));
       final cached = await ThumbnailService.getThumbnailPath(widget.videoPath);
-      if (cached != null) {
-        if (!mounted) return;
-        setState(() {
-          _thumbnailPath = cached;
-          _isLoading = false;
-        });
-        return;
-      }
+      if (cached == null) continue;
+      final exists = await File(cached).exists();
+      if (!mounted) return;
+      if (!exists) continue;
+      setState(() {
+        _thumbnailPath = cached;
+        _thumbnailExists = true;
+        _isLoading = false;
+      });
+      return;
     }
     if (!mounted) return;
     setState(() {
@@ -2032,7 +2041,7 @@ class _VideoThumbnailWidgetState extends State<_VideoThumbnailWidget> {
           ),
         ],
       ),
-      child: _thumbnailPath != null && File(_thumbnailPath!).existsSync()
+      child: _thumbnailExists
           ? ClipRRect(
               borderRadius: BorderRadius.circular(12),
               child: Image.file(

@@ -58,6 +58,7 @@
 	<string>This app needs camera access for video recording features.</string>
 	<key>UIBackgroundModes</key>
 	<array>
+		<string>audio</string>
 		<string>background-processing</string>
 	</array>
 </dict>

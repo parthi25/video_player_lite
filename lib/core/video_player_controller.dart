@@ -108,6 +108,12 @@ class VideoPlayerState {
   final bool isEqualizerEnabled;
   final List<AudioTrackInfo> audioTracks;
   final bool isSwitchingDecoder;
+  final bool isResolvingStream;
+  final String? resolvingMessage;
+  final double resolvingProgress;
+  final List<YoutubeStreamQuality> youtubeQualities;
+  final YoutubeStreamQuality? selectedYoutubeQuality;
+  final String? youtubeVideoId;
 
   const VideoPlayerState({
     this.player,
@@ -144,6 +150,12 @@ class VideoPlayerState {
     this.isEqualizerEnabled = false,
     this.audioTracks = const [],
     this.isSwitchingDecoder = false,
+    this.isResolvingStream = false,
+    this.resolvingMessage,
+    this.resolvingProgress = 0.0,
+    this.youtubeQualities = const [],
+    this.selectedYoutubeQuality,
+    this.youtubeVideoId,
   });
 
   VideoPlayerState copyWith({
@@ -181,6 +193,12 @@ class VideoPlayerState {
     bool? isEqualizerEnabled,
     List<AudioTrackInfo>? audioTracks,
     bool? isSwitchingDecoder,
+    bool? isResolvingStream,
+    String? resolvingMessage,
+    double? resolvingProgress,
+    List<YoutubeStreamQuality>? youtubeQualities,
+    YoutubeStreamQuality? selectedYoutubeQuality,
+    String? youtubeVideoId,
   }) {
     return VideoPlayerState(
       player: player ?? this.player,
@@ -217,6 +235,13 @@ class VideoPlayerState {
       isEqualizerEnabled: isEqualizerEnabled ?? this.isEqualizerEnabled,
       audioTracks: audioTracks ?? this.audioTracks,
       isSwitchingDecoder: isSwitchingDecoder ?? this.isSwitchingDecoder,
+      isResolvingStream: isResolvingStream ?? this.isResolvingStream,
+      resolvingMessage: resolvingMessage ?? this.resolvingMessage,
+      resolvingProgress: resolvingProgress ?? this.resolvingProgress,
+      youtubeQualities: youtubeQualities ?? this.youtubeQualities,
+      selectedYoutubeQuality:
+          selectedYoutubeQuality ?? this.selectedYoutubeQuality,
+      youtubeVideoId: youtubeVideoId ?? this.youtubeVideoId,
     );
   }
 }
@@ -227,6 +252,7 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
   Timer? _positionThrottleTimer;
   Timer? _audioTrackPoller;
   Timer? _statePoller;
+  Timer? _resolveProgressTimer;
   Duration? _pendingPosition;
   DateTime? _lastPositionUpdateTime;
   static const int _uiUpdateIntervalMs = 150;
@@ -253,10 +279,14 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     _audioTrackPoller = null;
     _statePoller?.cancel();
     _statePoller = null;
+    _resolveProgressTimer?.cancel();
+    _resolveProgressTimer = null;
 
     if (state.player != null) {
       await state.player!.dispose();
     }
+
+    SystemControlsService.abandonAudioFocus();
 
     await SystemChrome.setPreferredOrientations([
       DeviceOrientation.portraitUp,
@@ -306,10 +336,32 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     }
   }
 
+  void _startResolveProgress() {
+    _resolveProgressTimer?.cancel();
+    state = state.copyWith(resolvingProgress: 0.01);
+    _resolveProgressTimer = Timer.periodic(
+      const Duration(milliseconds: 180),
+      (_) {
+        final next = (state.resolvingProgress + 0.03).clamp(0.01, 0.95);
+        if (next == state.resolvingProgress) return;
+        state = state.copyWith(resolvingProgress: next);
+      },
+    );
+  }
+
+  void _stopResolveProgress({bool complete = false}) {
+    _resolveProgressTimer?.cancel();
+    _resolveProgressTimer = null;
+    if (complete) {
+      state = state.copyWith(resolvingProgress: 1.0);
+    }
+  }
+
   Future<void> initializeVideo(
     String? videoUrl,
     String? videoPath, {
     bool autoPlay = false,
+    Duration? startPosition,
   }) async {
     if (_isInitializing) return;
     _isInitializing = true;
@@ -334,6 +386,20 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
                   MediaType.video)
             : MediaType.video,
       );
+
+      if (videoUrl == null ||
+          videoUrl.isEmpty ||
+          !YoutubeStreamService.isYoutubeUrl(videoUrl)) {
+        state = state.copyWith(
+          youtubeQualities: const [],
+          selectedYoutubeQuality: null,
+          isResolvingStream: false,
+          resolvingMessage: null,
+          resolvingProgress: 0.0,
+          youtubeVideoId: null,
+        );
+        _stopResolveProgress();
+      }
 
       if (videoPath != null) {
         PlaybackHistoryService.saveLastPlayedVideo(videoPath);
@@ -507,10 +573,48 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
 
       Media? media;
       if (videoUrl != null && videoUrl.isNotEmpty) {
-        final resolvedUrl = await YoutubeStreamService.resolveIfNeeded(
-          videoUrl,
-        );
-        media = Media(resolvedUrl);
+        if (YoutubeStreamService.isYoutubeUrl(videoUrl)) {
+          state = state.copyWith(
+            isResolvingStream: true,
+            resolvingMessage: 'Loading YouTube stream...',
+            resolvingProgress: 0.01,
+            youtubeQualities: const [],
+            selectedYoutubeQuality: null,
+          );
+          _startResolveProgress();
+
+          final preferredHeight = state.selectedYoutubeQuality?.height;
+          final result = await YoutubeStreamService
+              .resolvePlayableUrlWithQualities(
+                videoUrl,
+                preferredHeight: preferredHeight,
+              )
+              .timeout(
+                const Duration(seconds: 20),
+                onTimeout: () {
+                  throw const YoutubeStreamException(
+                    'YouTube loading timed out. Please try again.',
+                  );
+                },
+              );
+
+          state = state.copyWith(
+            isResolvingStream: false,
+            resolvingMessage: null,
+            resolvingProgress: 1.0,
+            youtubeQualities: result.qualities,
+            selectedYoutubeQuality: result.selected,
+            youtubeVideoId: result.videoId,
+          );
+          _stopResolveProgress(complete: true);
+
+          media = Media(result.url);
+        } else {
+          final resolvedUrl = await YoutubeStreamService.resolveIfNeeded(
+            videoUrl,
+          );
+          media = Media(resolvedUrl);
+        }
       } else if (videoPath != null && videoPath.isNotEmpty) {
         media = Media(videoPath);
       }
@@ -524,6 +628,14 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         },
       );
 
+      if (state.selectedYoutubeQuality?.audioUrl != null) {
+        await player.setAudioTrack(
+          AudioTrack.uri(state.selectedYoutubeQuality!.audioUrl!),
+        );
+      } else {
+        await player.setAudioTrack(AudioTrack.auto());
+      }
+
       state = state.copyWith(
         player: player,
         videoController: videoController,
@@ -535,20 +647,8 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
       _startStatePolling(player);
       _startAudioTrackPolling(player);
 
-      // Restore playback position if available
-      if (videoPath != null) {
-        final savedPosition = await PlaybackHistoryService.getPosition(
-          videoPath,
-        );
-        if (savedPosition.inSeconds > 5) {
-          // Resume if we have a significant saved position
-          // Also check if it's not near the end (allow 5s buffer)
-          if (state.duration.inSeconds == 0 ||
-              savedPosition < state.duration - const Duration(seconds: 5)) {
-            await player.seek(savedPosition);
-            // Show toast or snackbar logic could go here, but doing silent resume is standard
-          }
-        }
+      if (startPosition != null) {
+        await player.seek(startPosition);
       }
 
       if (autoPlay) {
@@ -562,7 +662,11 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         hasError: true,
         errorMessage: e.message,
         isSwitchingDecoder: false,
+        isResolvingStream: false,
+        resolvingMessage: null,
+        resolvingProgress: 0.0,
       );
+      _stopResolveProgress();
     } catch (e, stackTrace) {
       if (e.toString().contains('Connection timed out') &&
           _initRetryCount < 1) {
@@ -579,7 +683,11 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
         hasError: true,
         errorMessage: 'Failed to load video: ${e.toString()}',
         isSwitchingDecoder: false,
+        isResolvingStream: false,
+        resolvingMessage: null,
+        resolvingProgress: 0.0,
       );
+      _stopResolveProgress();
     } finally {
       _isInitializing = false;
     }
@@ -589,13 +697,19 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
     _statePoller?.cancel();
     _statePoller = Timer.periodic(const Duration(milliseconds: 500), (_) {
       final current = player.state;
+      final wasPlaying = state.isPlaying;
       if (current.position != state.position) {
         state = state.copyWith(position: current.position);
       }
       if (current.duration != state.duration) {
         state = state.copyWith(duration: current.duration);
       }
-      if (current.playing != state.isPlaying) {
+      if (current.playing != wasPlaying) {
+        if (current.playing) {
+          SystemControlsService.requestAudioFocus();
+        } else {
+          SystemControlsService.abandonAudioFocus();
+        }
         state = state.copyWith(isPlaying: current.playing);
       }
     });
@@ -604,6 +718,66 @@ class VideoPlayerControllerNotifier extends StateNotifier<VideoPlayerState> {
   Future<void> play() async => await state.player?.play();
   Future<void> pause() async => await state.player?.pause();
   Future<void> togglePlayPause() async => await state.player?.playOrPause();
+
+  Future<void> setYoutubeQuality(YoutubeStreamQuality quality) async {
+    final player = state.player;
+    if (player == null) return;
+    if (state.videoUrl == null ||
+        !YoutubeStreamService.isYoutubeUrl(state.videoUrl!)) {
+      return;
+    }
+
+    final wasPlaying = state.isPlaying;
+    final position = state.position;
+    state = state.copyWith(
+      isResolvingStream: true,
+      resolvingMessage: 'Switching quality...',
+      resolvingProgress: 0.01,
+      selectedYoutubeQuality: quality,
+    );
+    _startResolveProgress();
+
+    try {
+      if (state.youtubeVideoId != null) {
+        await YoutubeStreamService.setPreferredHeight(
+          state.youtubeVideoId!,
+          quality.height,
+        );
+      }
+      await player.open(Media(quality.url), play: false).timeout(
+        const Duration(seconds: 12),
+        onTimeout: () {
+          throw Exception('Connection timed out. Please try again.');
+        },
+      );
+
+      if (quality.audioUrl != null) {
+        await player.setAudioTrack(AudioTrack.uri(quality.audioUrl!));
+      } else {
+        await player.setAudioTrack(AudioTrack.auto());
+      }
+
+      if (state.duration.inMilliseconds > 0) {
+        await player.seek(position);
+      }
+      if (wasPlaying) {
+        await player.play();
+      }
+    } catch (e) {
+      debugPrint('Error switching quality: $e');
+      state = state.copyWith(
+        hasError: true,
+        errorMessage: 'Failed to switch quality: ${e.toString()}',
+      );
+    } finally {
+      state = state.copyWith(
+        isResolvingStream: false,
+        resolvingMessage: null,
+        resolvingProgress: 0.0,
+      );
+      _stopResolveProgress();
+    }
+  }
   Future<void> seekTo(Duration position) async {
     Duration safePosition = position;
     if (safePosition.isNegative) {

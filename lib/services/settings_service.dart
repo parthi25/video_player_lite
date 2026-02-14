@@ -10,6 +10,9 @@ class SettingsService {
   static const String _rewindSpeedKey = 'rewind_speed';
   static const String _holdForwardSpeedKey = 'hold_forward_speed';
   static const String _holdRewindSpeedKey = 'hold_rewind_speed';
+  static const String _backgroundPlayKeyAndroid =
+      'background_play_enabled_android';
+  static const String _backgroundPlayKeyIOS = 'background_play_enabled_ios';
 
   static final StreamController<void> _changes =
       StreamController<void>.broadcast();
@@ -105,6 +108,24 @@ class SettingsService {
   static Future<void> setHoldRewindSpeed(double speed) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_holdRewindSpeedKey, speed);
+    _changes.add(null);
+  }
+
+  static Future<bool> getBackgroundPlaybackEnabled({
+    required bool isIOS,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = isIOS ? _backgroundPlayKeyIOS : _backgroundPlayKeyAndroid;
+    return prefs.getBool(key) ?? false;
+  }
+
+  static Future<void> setBackgroundPlaybackEnabled(
+    bool enabled, {
+    required bool isIOS,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final key = isIOS ? _backgroundPlayKeyIOS : _backgroundPlayKeyAndroid;
+    await prefs.setBool(key, enabled);
     _changes.add(null);
   }
 }

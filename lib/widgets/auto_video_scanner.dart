@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/file_browser_service.dart';
 import '../services/video_scanner_service.dart';
+import '../services/thumbnail_service.dart';
 import 'video_file_item.dart';
 
 class AutoVideoScannerWidget extends ConsumerStatefulWidget {
@@ -235,15 +237,26 @@ class _AutoVideoScannerWidgetState
 
         // Video list
         Expanded(
-          child: ListView.builder(
-            itemCount: videos.length,
-            itemBuilder: (context, index) {
-              final video = videos[index];
-              return VideoFileItem(
-                videoFile: video,
-                onTap: () => _selectVideo(video),
-              );
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is UserScrollNotification) {
+                ThumbnailService.setPausedDebounced(
+                  notification.direction != ScrollDirection.idle,
+                );
+              }
+              return false;
             },
+            child: ListView.builder(
+              itemCount: videos.length,
+              itemBuilder: (context, index) {
+                final video = videos[index];
+                return VideoFileItem(
+                  key: ValueKey(video.path),
+                  videoFile: video,
+                  onTap: () => _selectVideo(video),
+                );
+              },
+            ),
           ),
         ),
       ],

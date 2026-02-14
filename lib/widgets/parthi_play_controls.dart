@@ -7,6 +7,9 @@ import '../widgets/subtitle_selection_widget.dart';
 import '../services/playlist_service.dart';
 import '../screens/video_cutter_screen.dart';
 import '../widgets/equalizer_widget.dart';
+import '../services/youtube_stream_service.dart';
+import '../services/background_playback_service.dart';
+import '../services/settings_service.dart';
 
 class ParthiPlayControls extends ConsumerStatefulWidget {
   const ParthiPlayControls({super.key});
@@ -26,6 +29,9 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
   Timer? _hideTimer;
   bool _isSeeking = false;
   Duration _seekPosition = Duration.zero;
+  bool _showRemainingTime = false;
+  bool _backgroundPlayEnabled = false;
+  bool _backgroundPlaySupported = false;
 
   @override
   void initState() {
@@ -41,6 +47,7 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
 
     _fadeController.forward();
     _startHideTimer();
+    _loadBackgroundPlaybackState();
   }
 
   @override
@@ -49,6 +56,21 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
     _hideTimer?.cancel();
     _fadeController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadBackgroundPlaybackState() async {
+    final enabled = await SettingsService.getBackgroundPlaybackEnabled(
+      isIOS: Platform.isIOS,
+    );
+    bool supported = await BackgroundPlaybackService.isBackgroundSupported();
+    if (Platform.isIOS) {
+      supported = true;
+    }
+    if (!mounted) return;
+    setState(() {
+      _backgroundPlayEnabled = enabled;
+      _backgroundPlaySupported = supported;
+    });
   }
 
   @override
@@ -121,6 +143,23 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
       }
     });
 
+    ref.listen(videoPlayerControllerProvider.select((s) => s.isLocked), (
+      _,
+      locked,
+    ) {
+      if (locked) {
+        _hideTimer?.cancel();
+        if (_fadeController.status == AnimationStatus.dismissed) {
+          _fadeController.forward();
+        }
+        ref
+            .read(videoPlayerControllerProvider.notifier)
+            .setControlsVisible(true);
+      } else if (ref.read(videoPlayerControllerProvider).isPlaying) {
+        _startHideTimer();
+      }
+    });
+
     return FadeTransition(
       opacity: _fadeAnimation,
       child: IgnorePointer(
@@ -133,13 +172,6 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
             ),
             if (!isLocked) _buildTopControls(videoController),
             _buildBottomControls(videoController),
-            if (isLocked)
-              Center(
-                child: IconButton(
-                  icon: const Icon(Icons.lock, color: Colors.white, size: 64),
-                  onPressed: () => videoController.toggleLock(),
-                ),
-              ),
             if (_showSidePanel && !isLocked)
               Positioned(
                 top: 0,
@@ -305,6 +337,11 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
 
     final List<Widget> allActions = [
       _buildActionButton(Icons.cast, () => _showCastingControls()),
+      _buildActionButton(
+        Icons.headphones,
+        () => _toggleBackgroundPlayback(videoController),
+        color: _backgroundPlayEnabled ? Colors.red : null,
+      ),
       _buildActionButton(
         Icons.speed,
         () => _showSpeedSelection(videoController),
@@ -502,11 +539,22 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
                           ),
                         ),
                       ),
-                      Text(
-                        _formatDurationOrUnknown(duration),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
+                      GestureDetector(
+                        onTap: hasDuration
+                            ? () {
+                                setState(() {
+                                  _showRemainingTime = !_showRemainingTime;
+                                });
+                              }
+                            : null,
+                        child: Text(
+                          _showRemainingTime
+                              ? '-${_formatDurationOrUnknown(duration - displayPosition)}'
+                              : _formatDurationOrUnknown(duration),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                          ),
                         ),
                       ),
                     ],
@@ -517,11 +565,7 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
                       child: Align(
                         alignment: Alignment.centerRight,
                         child: Text(
-                          '-${_formatDuration(duration - displayPosition)}',
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 11,
-                          ),
+                          '',
                         ),
                       ),
                     ),
@@ -562,13 +606,23 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
                             ],
                           ),
                         ),
-                        _buildAspectRatioButton(videoController),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            _buildQualityButton(videoController),
+                            const SizedBox(width: 8),
+                            _buildAspectRatioButton(videoController),
+                          ],
+                        ),
                       ],
                     ),
                   ),
                   const SizedBox(height: 12),
                 ] else ...[
-                  Center(child: _buildLockButton(videoController)),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: _buildLockButton(videoController),
+                  ),
                   const SizedBox(height: 16),
                 ],
               ],
@@ -691,6 +745,119 @@ class _ParthiPlayControlsState extends ConsumerState<ParthiPlayControls>
               ),
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _toggleBackgroundPlayback(
+    VideoPlayerControllerNotifier videoController,
+  ) async {
+    if (!_backgroundPlaySupported) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Background playback not supported')),
+      );
+      return;
+    }
+
+    final videoState = ref.read(videoPlayerControllerProvider);
+    if (_backgroundPlayEnabled) {
+      if (!Platform.isIOS) {
+        await BackgroundPlaybackService.disableBackgroundPlayback();
+      }
+      await SettingsService.setBackgroundPlaybackEnabled(
+        false,
+        isIOS: Platform.isIOS,
+      );
+      if (!mounted) return;
+      setState(() => _backgroundPlayEnabled = false);
+      return;
+    }
+
+    final title = videoState.videoPath?.split(Platform.pathSeparator).last ??
+        videoState.videoUrl ??
+        'Parthi Play';
+
+    bool enabled = true;
+    if (!Platform.isIOS) {
+      enabled = await BackgroundPlaybackService.enableBackgroundPlayback(
+        title: title,
+        artist: 'Parthi Play',
+        url: videoState.videoUrl ?? videoState.videoPath ?? '',
+        duration: videoState.duration,
+      );
+    }
+
+    await SettingsService.setBackgroundPlaybackEnabled(
+      enabled,
+      isIOS: Platform.isIOS,
+    );
+    if (!mounted) return;
+    setState(() {
+      _backgroundPlayEnabled = enabled;
+    });
+  }
+
+  Widget _buildQualityButton(VideoPlayerControllerNotifier videoController) {
+    final qualities = ref.watch(
+      videoPlayerControllerProvider.select((s) => s.youtubeQualities),
+    );
+    if (qualities.isEmpty) return const SizedBox.shrink();
+
+    final selected = ref.watch(
+      videoPlayerControllerProvider.select(
+        (s) => s.selectedYoutubeQuality,
+      ),
+    );
+
+    String menuLabel(YoutubeStreamQuality q) {
+      return q.audioUrl != null ? '${q.label} (V+A)' : q.label;
+    }
+
+    return PopupMenuButton<YoutubeStreamQuality>(
+      tooltip: 'Quality',
+      color: Colors.black87,
+      onSelected: (quality) => videoController.setYoutubeQuality(quality),
+      itemBuilder: (context) {
+        return qualities
+            .map(
+              (q) => PopupMenuItem<YoutubeStreamQuality>(
+                value: q,
+                child: Row(
+                  children: [
+                    if (selected?.url == q.url)
+                      const Icon(Icons.check, size: 18, color: Colors.white)
+                    else
+                      const SizedBox(width: 18),
+                    const SizedBox(width: 8),
+                    Text(
+                      menuLabel(q),
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ],
+                ),
+              ),
+            )
+            .toList();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.white24),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.hd_rounded, color: Colors.white, size: 18),
+            const SizedBox(width: 6),
+            Text(
+              selected?.label ?? 'Auto',
+              style: const TextStyle(color: Colors.white, fontSize: 12),
+            ),
+          ],
         ),
       ),
     );

@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
 
 class CastDevice {
   final String id;
@@ -144,6 +147,12 @@ class CastingService {
   static CastSession? _currentSession;
   static bool _isInitialized = false;
   static bool _isScanning = false;
+  static const String _ssdpAddress = '239.255.255.250';
+  static const int _ssdpPort = 1900;
+  static const String _avTransportService =
+      'urn:schemas-upnp-org:service:AVTransport:1';
+  static const String _renderingControlService =
+      'urn:schemas-upnp-org:service:RenderingControl:1';
 
   static Stream<List<CastDevice>> get devicesStream =>
       _devicesController?.stream ?? Stream.empty();
@@ -157,16 +166,15 @@ class CastingService {
     try {
       final result = await _channel.invokeMethod('initialize');
       _isInitialized = result ?? false;
-
-      if (_isInitialized) {
-        _initializeStreams();
-      }
-
-      return _isInitialized;
     } catch (e) {
       debugPrint('Error initializing casting service: $e');
-      return false;
+      _isInitialized = true; // DLNA does not require native init.
     }
+
+    if (_isInitialized) {
+      _initializeStreams();
+    }
+    return _isInitialized;
   }
 
   static Future<bool> isSupported() async {
@@ -174,7 +182,7 @@ class CastingService {
       return await _channel.invokeMethod('isSupported') ?? false;
     } catch (e) {
       debugPrint('Error checking casting support: $e');
-      return false;
+      return true; // DLNA is supported via local network scan.
     }
   }
 
@@ -187,18 +195,15 @@ class CastingService {
       _isScanning = true;
       _notifyDevicesChange();
 
-      final result = await _channel.invokeMethod('scanForDevices', {
-        'timeout': timeout.inMilliseconds,
-      });
-
-      _isScanning = false;
-
-      if (result != null) {
-        final List<dynamic> devicesJson = result;
-        _availableDevices = devicesJson
-            .map((json) => CastDevice.fromJson(json))
-            .toList();
+      List<CastDevice> devices = [];
+      const maxAttempts = 2;
+      for (int attempt = 0; attempt < maxAttempts; attempt++) {
+        devices = await _scanDlnaDevices(timeout: timeout);
+        if (devices.isNotEmpty) break;
+        await Future.delayed(const Duration(milliseconds: 400));
       }
+      _availableDevices = devices;
+      _isScanning = false;
 
       _notifyDevicesChange();
       return _availableDevices;
@@ -213,6 +218,13 @@ class CastingService {
   static Future<bool> connectToDevice(CastDevice device) async {
     try {
       if (!_isInitialized) return false;
+
+      if (device.type == 'DLNA') {
+        _updateDeviceConnection(device.id, true);
+        _currentSession = CastSession(device: device);
+        _notifySessionChange();
+        return true;
+      }
 
       final result = await _channel.invokeMethod('connectToDevice', {
         'deviceId': device.id,
@@ -236,6 +248,13 @@ class CastingService {
   static Future<bool> disconnectFromDevice() async {
     try {
       if (_currentSession == null) return true;
+
+      if (_currentSession!.device.type == 'DLNA') {
+        _updateDeviceConnection(_currentSession!.device.id, false);
+        _currentSession = null;
+        _notifySessionChange();
+        return true;
+      }
 
       final result = await _channel.invokeMethod('disconnectFromDevice');
 
@@ -261,6 +280,31 @@ class CastingService {
   }) async {
     try {
       if (!_isInitialized) return false;
+
+      if (device.type == 'DLNA') {
+        final avTransportUrl =
+            device.capabilities?['avTransportUrl'] as String?;
+        if (avTransportUrl == null || avTransportUrl.isEmpty) return false;
+
+        final ok = await _dlnaSetAvTransportUri(
+          avTransportUrl,
+          mediaUrl,
+        );
+        if (!ok) return false;
+
+        if (autoPlay) {
+          await _dlnaPlay(avTransportUrl);
+        }
+
+        _currentSession = CastSession(
+          device: device,
+          mediaInfo: mediaInfo,
+          position: startPosition ?? Duration.zero,
+          isPlaying: autoPlay,
+        );
+        _notifySessionChange();
+        return true;
+      }
 
       final params = <String, dynamic>{
         'deviceId': device.id,
@@ -296,6 +340,15 @@ class CastingService {
     try {
       if (_currentSession == null) return false;
 
+      if (_currentSession!.device.type == 'DLNA') {
+        final avTransportUrl =
+            _currentSession!.device.capabilities?['avTransportUrl'] as String?;
+        if (avTransportUrl == null || avTransportUrl.isEmpty) return false;
+        final ok = await _dlnaPlay(avTransportUrl);
+        if (ok) _updateSessionState(isPlaying: true);
+        return ok;
+      }
+
       final result = await _channel.invokeMethod('play');
 
       if (result ?? false) {
@@ -312,6 +365,15 @@ class CastingService {
   static Future<bool> pause() async {
     try {
       if (_currentSession == null) return false;
+
+      if (_currentSession!.device.type == 'DLNA') {
+        final avTransportUrl =
+            _currentSession!.device.capabilities?['avTransportUrl'] as String?;
+        if (avTransportUrl == null || avTransportUrl.isEmpty) return false;
+        final ok = await _dlnaPause(avTransportUrl);
+        if (ok) _updateSessionState(isPlaying: false);
+        return ok;
+      }
 
       final result = await _channel.invokeMethod('pause');
 
@@ -330,6 +392,15 @@ class CastingService {
     try {
       if (_currentSession == null) return false;
 
+      if (_currentSession!.device.type == 'DLNA') {
+        final avTransportUrl =
+            _currentSession!.device.capabilities?['avTransportUrl'] as String?;
+        if (avTransportUrl == null || avTransportUrl.isEmpty) return false;
+        final ok = await _dlnaStop(avTransportUrl);
+        if (ok) _updateSessionState(isPlaying: false, position: Duration.zero);
+        return ok;
+      }
+
       final result = await _channel.invokeMethod('stop');
 
       if (result ?? false) {
@@ -346,6 +417,15 @@ class CastingService {
   static Future<bool> seek(Duration position) async {
     try {
       if (_currentSession == null) return false;
+
+      if (_currentSession!.device.type == 'DLNA') {
+        final avTransportUrl =
+            _currentSession!.device.capabilities?['avTransportUrl'] as String?;
+        if (avTransportUrl == null || avTransportUrl.isEmpty) return false;
+        final ok = await _dlnaSeek(avTransportUrl, position);
+        if (ok) _updateSessionState(position: position);
+        return ok;
+      }
 
       final result = await _channel.invokeMethod('seek', {
         'position': position.inMilliseconds,
@@ -366,6 +446,16 @@ class CastingService {
     try {
       if (_currentSession == null) return false;
 
+      if (_currentSession!.device.type == 'DLNA') {
+        final renderingUrl =
+            _currentSession!.device.capabilities?['renderingControlUrl']
+                as String?;
+        if (renderingUrl == null || renderingUrl.isEmpty) return false;
+        final ok = await _dlnaSetVolume(renderingUrl, volume);
+        if (ok) _updateSessionState(volume: volume);
+        return ok;
+      }
+
       final result = await _channel.invokeMethod('setVolume', {
         'volume': volume.clamp(0.0, 1.0),
       });
@@ -385,6 +475,16 @@ class CastingService {
     try {
       if (_currentSession == null) return false;
 
+      if (_currentSession!.device.type == 'DLNA') {
+        final renderingUrl =
+            _currentSession!.device.capabilities?['renderingControlUrl']
+                as String?;
+        if (renderingUrl == null || renderingUrl.isEmpty) return false;
+        final ok = await _dlnaSetMute(renderingUrl, muted);
+        if (ok) _updateSessionState(isMuted: muted);
+        return ok;
+      }
+
       final result = await _channel.invokeMethod('setMuted', {'muted': muted});
 
       if (result ?? false) {
@@ -402,6 +502,10 @@ class CastingService {
     try {
       if (_currentSession == null) return null;
 
+      if (_currentSession!.device.type == 'DLNA') {
+        return _currentSession;
+      }
+
       final result = await _channel.invokeMethod('getSessionStatus');
 
       if (result != null) {
@@ -418,6 +522,9 @@ class CastingService {
 
   static Future<bool> isDeviceConnected(String deviceId) async {
     try {
+      if (_currentSession?.device.type == 'DLNA') {
+        return _currentSession?.device.id == deviceId;
+      }
       return await _channel.invokeMethod('isDeviceConnected', {
             'deviceId': deviceId,
           }) ??
@@ -475,6 +582,307 @@ class CastingService {
           break;
       }
     });
+  }
+
+  static Future<List<CastDevice>> _scanDlnaDevices({
+    required Duration timeout,
+  }) async {
+    final devices = <String, CastDevice>{};
+    final socket = await RawDatagramSocket.bind(
+      InternetAddress.anyIPv4,
+      0,
+      reuseAddress: true,
+    );
+    socket.broadcastEnabled = true;
+
+    final searchRequest = [
+      'M-SEARCH * HTTP/1.1',
+      'HOST: $_ssdpAddress:$_ssdpPort',
+      'MAN: "ssdp:discover"',
+      'MX: 2',
+      'ST: ssdp:all',
+      '',
+      '',
+    ].join('\r\n');
+
+    socket.send(
+      utf8.encode(searchRequest),
+      InternetAddress(_ssdpAddress),
+      _ssdpPort,
+    );
+
+    final completer = Completer<void>();
+    final timer = Timer(timeout, () {
+      if (!completer.isCompleted) completer.complete();
+    });
+
+    socket.listen((event) async {
+      if (event != RawSocketEvent.read) return;
+      final datagram = socket.receive();
+      if (datagram == null) return;
+
+      final response = utf8.decode(datagram.data, allowMalformed: true);
+      final headers = _parseSsdpHeaders(response);
+      final location = headers['location'];
+      final usn = headers['usn'];
+      if (location == null || location.isEmpty) return;
+
+      final key = usn ?? location;
+      if (devices.containsKey(key)) return;
+
+      final device = await _fetchDlnaDevice(location, headers);
+      if (device != null) {
+        devices[key] = device;
+        _addOrUpdateDevice(device);
+      }
+    });
+
+    await completer.future;
+    timer.cancel();
+    socket.close();
+
+    return devices.values.toList();
+  }
+
+  static Map<String, String> _parseSsdpHeaders(String response) {
+    final lines = response.split(RegExp(r'\r\n|\n'));
+    final headers = <String, String>{};
+    for (final line in lines) {
+      final idx = line.indexOf(':');
+      if (idx <= 0) continue;
+      final key = line.substring(0, idx).trim().toLowerCase();
+      final value = line.substring(idx + 1).trim();
+      headers[key] = value;
+    }
+    return headers;
+  }
+
+  static Future<CastDevice?> _fetchDlnaDevice(
+    String location,
+    Map<String, String> headers,
+  ) async {
+    try {
+      final uri = Uri.parse(location);
+      final response = await http.get(uri).timeout(
+        const Duration(seconds: 5),
+      );
+      if (response.statusCode != 200) return null;
+
+      final xml = response.body;
+      final friendlyName =
+          _matchXmlTag(xml, 'friendlyName') ?? uri.host;
+      final urlBase = _matchXmlTag(xml, 'URLBase');
+      final baseUri = Uri.parse(urlBase ?? location);
+      final deviceType = _matchXmlTag(xml, 'deviceType');
+
+      final avTransport = _findServiceControlUrl(
+        xml,
+        _avTransportService,
+        baseUri,
+      );
+      final rendering = _findServiceControlUrl(
+        xml,
+        _renderingControlService,
+        baseUri,
+      );
+
+      if (avTransport == null || avTransport.isEmpty) {
+        return null;
+      }
+
+      return CastDevice(
+        id: headers['usn'] ?? location,
+        name: friendlyName,
+        type: 'DLNA',
+        host: uri.host,
+        port: uri.port == 0 ? 80 : uri.port,
+        isConnected: false,
+        capabilities: {
+          'location': location,
+          'avTransportUrl': avTransport,
+          'renderingControlUrl': rendering,
+          'server': headers['server'],
+          'st': headers['st'],
+          'deviceType': deviceType,
+        },
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static String? _matchXmlTag(String xml, String tag) {
+    final regex = RegExp(
+      '<$tag[^>]*>(.*?)</$tag>',
+      caseSensitive: false,
+      dotAll: true,
+    );
+    final match = regex.firstMatch(xml);
+    return match?.group(1)?.trim();
+  }
+
+  static String? _findServiceControlUrl(
+    String xml,
+    String serviceType,
+    Uri baseUri,
+  ) {
+    final serviceRegex = RegExp(
+      '<service>.*?<serviceType>\\s*${RegExp.escape(serviceType)}\\s*</serviceType>.*?<controlURL>\\s*(.*?)\\s*</controlURL>.*?</service>',
+      caseSensitive: false,
+      dotAll: true,
+    );
+    final match = serviceRegex.firstMatch(xml);
+    final control = match?.group(1);
+    if (control == null || control.isEmpty) return null;
+    return baseUri.resolve(control).toString();
+  }
+
+  static Future<bool> _dlnaSetAvTransportUri(
+    String controlUrl,
+    String mediaUrl,
+  ) async {
+    const action = 'SetAVTransportURI';
+    const service = _avTransportService;
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+        <CurrentURI>${_xmlEscape(mediaUrl)}</CurrentURI>
+        <CurrentURIMetaData></CurrentURIMetaData>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _dlnaPlay(String controlUrl) async {
+    const action = 'Play';
+    const service = _avTransportService;
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+        <Speed>1</Speed>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _dlnaPause(String controlUrl) async {
+    const action = 'Pause';
+    const service = _avTransportService;
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _dlnaStop(String controlUrl) async {
+    const action = 'Stop';
+    const service = _avTransportService;
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _dlnaSeek(
+    String controlUrl,
+    Duration position,
+  ) async {
+    const action = 'Seek';
+    const service = _avTransportService;
+    final target = _formatDlnaTime(position);
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+        <Unit>REL_TIME</Unit>
+        <Target>$target</Target>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _dlnaSetVolume(
+    String controlUrl,
+    double volume,
+  ) async {
+    const action = 'SetVolume';
+    const service = _renderingControlService;
+    final vol = (volume.clamp(0.0, 1.0) * 100).round();
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+        <Channel>Master</Channel>
+        <DesiredVolume>$vol</DesiredVolume>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _dlnaSetMute(
+    String controlUrl,
+    bool muted,
+  ) async {
+    const action = 'SetMute';
+    const service = _renderingControlService;
+    final body = '''
+      <u:$action xmlns:u="$service">
+        <InstanceID>0</InstanceID>
+        <Channel>Master</Channel>
+        <DesiredMute>${muted ? 1 : 0}</DesiredMute>
+      </u:$action>
+    ''';
+    return _sendDlnaSoap(controlUrl, service, action, body);
+  }
+
+  static Future<bool> _sendDlnaSoap(
+    String controlUrl,
+    String serviceType,
+    String action,
+    String innerBody,
+  ) async {
+    try {
+      final envelope = '''
+        <?xml version="1.0" encoding="utf-8"?>
+        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
+          s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+          <s:Body>
+            $innerBody
+          </s:Body>
+        </s:Envelope>
+      ''';
+      final response = await http.post(
+        Uri.parse(controlUrl),
+        headers: {
+          'Content-Type': 'text/xml; charset="utf-8"',
+          'SOAPAction': '"$serviceType#$action"',
+        },
+        body: envelope,
+      );
+      return response.statusCode >= 200 && response.statusCode < 300;
+    } catch (e) {
+      debugPrint('DLNA SOAP error: $e');
+      return false;
+    }
+  }
+
+  static String _formatDlnaTime(Duration d) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    final hours = d.inHours;
+    final minutes = d.inMinutes.remainder(60);
+    final seconds = d.inSeconds.remainder(60);
+    return '${two(hours)}:${two(minutes)}:${two(seconds)}';
+  }
+
+  static String _xmlEscape(String value) {
+    return value
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
   }
 
   static void _addOrUpdateDevice(CastDevice device) {

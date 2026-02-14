@@ -13,6 +13,8 @@ class MainActivity : FlutterActivity() {
     private val SYSTEM_CHANNEL = "next_player/system_controls"
     private val CASTING_CHANNEL = "next_player/casting"
     private val ORIENTATION_CHANNEL = "parthi_play/orientation"
+    private val audioFocusChangeListener =
+        AudioManager.OnAudioFocusChangeListener { }
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -76,6 +78,8 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARGUMENT", "Volume is null", null)
                     }
                 }
+                "requestAudioFocus" -> result.success(requestAudioFocus())
+                "abandonAudioFocus" -> result.success(abandonAudioFocus())
                 "isSupported" -> result.success(true)
                 else -> result.notImplemented()
             }
@@ -126,6 +130,11 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+    }
+
     private fun getBrightness(): Float {
         return try {
             val layoutParams = window.attributes
@@ -162,5 +171,23 @@ class MainActivity : FlutterActivity() {
         val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val targetVolume = (volume * maxVolume).toInt()
         audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, targetVolume, 0)
+    }
+
+    @Suppress("DEPRECATION")
+    private fun requestAudioFocus(): Boolean {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val result = audioManager.requestAudioFocus(
+            audioFocusChangeListener,
+            AudioManager.STREAM_MUSIC,
+            AudioManager.AUDIOFOCUS_GAIN
+        )
+        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+    }
+
+    @Suppress("DEPRECATION")
+    private fun abandonAudioFocus(): Boolean {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val result = audioManager.abandonAudioFocus(audioFocusChangeListener)
+        return result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
     }
 }

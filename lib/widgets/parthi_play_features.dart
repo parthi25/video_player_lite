@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/video_player_controller.dart';
 import '../widgets/subtitle_selection_widget.dart';
+import '../services/casting_service.dart';
 
 class ParthiPlayFeatures extends ConsumerStatefulWidget {
   const ParthiPlayFeatures({super.key});
@@ -763,73 +764,9 @@ class _ParthiPlayFeaturesState extends ConsumerState<ParthiPlayFeatures> {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1E1E1E),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Cast to TV',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            ListTile(
-              title: const Text(
-                'Scan Devices',
-                style: TextStyle(color: Colors.white),
-              ),
-              subtitle: const Text(
-                'Find casting devices',
-                style: TextStyle(color: Colors.grey),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Device scanning coming soon')),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text(
-                'Chromecast',
-                style: TextStyle(color: Colors.white),
-              ),
-              subtitle: const Text(
-                'Cast to Chromecast',
-                style: TextStyle(color: Colors.grey),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Chromecast support coming soon'),
-                  ),
-                );
-              },
-            ),
-            ListTile(
-              title: const Text('DLNA', style: TextStyle(color: Colors.white)),
-              subtitle: const Text(
-                'Cast to DLNA devices',
-                style: TextStyle(color: Colors.grey),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('DLNA support coming soon')),
-                );
-              },
-            ),
-          ],
-        ),
-      ),
+      builder: (context) => const _CastingSheet(),
     );
   }
-
   void _showSubtitleDownloader() {
     showModalBottomSheet(
       context: context,
@@ -972,6 +909,150 @@ class _ParthiPlayFeaturesState extends ConsumerState<ParthiPlayFeatures> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CastingSheet extends StatefulWidget {
+  const _CastingSheet();
+
+  @override
+  State<_CastingSheet> createState() => _CastingSheetState();
+}
+
+class _CastingSheetState extends State<_CastingSheet> {
+  bool _isInitializing = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    await CastingService.initialize();
+    await CastingService.scanForDevices();
+    if (!mounted) return;
+    setState(() {
+      _isInitializing = false;
+    });
+  }
+
+  Future<void> _scan() async {
+    setState(() {});
+    await CastingService.scanForDevices();
+    if (!mounted) return;
+    setState(() {});
+  }
+
+  IconData _deviceIcon(CastDevice device) {
+    final server =
+        (device.capabilities?['server'] as String?)?.toLowerCase() ?? '';
+    final deviceType =
+        (device.capabilities?['deviceType'] as String?)?.toLowerCase() ?? '';
+    if (server.contains('sonos') || server.contains('audio')) {
+      return Icons.speaker;
+    }
+    if (deviceType.contains('mediarenderer')) {
+      return Icons.tv;
+    }
+    return Icons.cast_connected;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.7,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Cast to DLNA',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              ElevatedButton.icon(
+                onPressed: _scan,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Scan'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade600,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+              const SizedBox(width: 12),
+              if (CastingService.isScanning || _isInitializing)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.red),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: StreamBuilder<List<CastDevice>>(
+              stream: CastingService.devicesStream,
+              initialData: CastingService.getAvailableDevices(),
+              builder: (context, snapshot) {
+                final devices = snapshot.data ?? [];
+                if (devices.isEmpty && !CastingService.isScanning) {
+                  return const Center(
+                    child: Text(
+                      'No DLNA devices found',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  itemCount: devices.length,
+                  itemBuilder: (context, index) {
+                    final device = devices[index];
+                    return ListTile(
+                      leading: Icon(_deviceIcon(device), color: Colors.white),
+                      title: Text(
+                        device.name,
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                      subtitle: Text(
+                        device.host,
+                        style: const TextStyle(color: Colors.grey),
+                      ),
+                      trailing: device.isConnected
+                          ? const Icon(Icons.check_circle, color: Colors.green)
+                          : const Icon(
+                              Icons.cast_outlined,
+                              color: Colors.white54,
+                            ),
+                      onTap: () async {
+                        if (device.isConnected) {
+                          await CastingService.disconnectFromDevice();
+                        } else {
+                          await CastingService.connectToDevice(device);
+                        }
+                        if (!mounted) return;
+                        setState(() {});
+                      },
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

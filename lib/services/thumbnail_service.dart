@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
@@ -14,8 +15,14 @@ class ThumbnailService {
   static bool _isProcessingQueue = false;
   static Future<void>? _queueRunner;
   static DateTime? _lastCleanupAt;
-  static const int _batchLimit = 60;
+  static Timer? _pauseTimer;
+  static const int _batchLimit = 30;
   static const Duration _cleanupInterval = Duration(hours: 12);
+  static const int _thumbnailQuality = 60;
+  static const int _thumbnailMaxWidth = 320;
+  static const int _thumbnailMaxHeight = 180;
+  static const Duration _queueSpacing = Duration(milliseconds: 120);
+  static bool _isPaused = false;
 
   static Future<void> initialize() async {
     try {
@@ -73,7 +80,9 @@ class ThumbnailService {
         video: videoPath,
         thumbnailPath: _thumbnailDir!.path,
         imageFormat: ImageFormat.JPEG,
-        quality: 75,
+        quality: _thumbnailQuality,
+        maxWidth: _thumbnailMaxWidth,
+        maxHeight: _thumbnailMaxHeight,
       );
 
       if (generatedPath != null && await File(generatedPath).exists()) {
@@ -99,6 +108,25 @@ class ThumbnailService {
       _queue.add(videoPath);
     }
     _runQueue();
+  }
+
+  static void setPaused(bool paused) {
+    _pauseTimer?.cancel();
+    _isPaused = paused;
+  }
+
+  static void setPausedDebounced(
+    bool paused, {
+    Duration delay = const Duration(milliseconds: 140),
+  }) {
+    if (paused) {
+      setPaused(true);
+      return;
+    }
+    _pauseTimer?.cancel();
+    _pauseTimer = Timer(delay, () {
+      setPaused(false);
+    });
   }
 
   static Future<void> clearCache() async {
@@ -183,13 +211,17 @@ class ThumbnailService {
     _isProcessingQueue = true;
     try {
       while (_queue.isNotEmpty) {
+        if (_isPaused) {
+          await Future.delayed(_queueSpacing);
+          continue;
+        }
         final next = _queue.removeAt(0);
         try {
           await generateThumbnail(next);
         } catch (e) {
           debugPrint('Error generating thumbnail for $next: $e');
         }
-        await Future.delayed(const Duration(milliseconds: 80));
+        await Future.delayed(_queueSpacing);
       }
     } finally {
       _isProcessingQueue = false;

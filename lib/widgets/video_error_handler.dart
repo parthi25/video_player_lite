@@ -159,8 +159,10 @@ class _VideoPlayerErrorHandlerState
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 40),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 12,
+                runSpacing: 12,
                 children: [
                   ElevatedButton(
                     onPressed: () => Navigator.of(context).pop(),
@@ -181,8 +183,7 @@ class _VideoPlayerErrorHandlerState
                     ),
                   ),
                   if (widget.videoUrl != null &&
-                      YoutubeStreamService.isYoutubeUrl(widget.videoUrl!)) ...[
-                    const SizedBox(width: 16),
+                      YoutubeStreamService.isYoutubeUrl(widget.videoUrl!))
                     ElevatedButton(
                       onPressed: _openInYoutube,
                       style: ElevatedButton.styleFrom(
@@ -201,8 +202,6 @@ class _VideoPlayerErrorHandlerState
                         style: TextStyle(fontWeight: FontWeight.w600),
                       ),
                     ),
-                  ],
-                  const SizedBox(width: 16),
                   Container(
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
@@ -217,7 +216,7 @@ class _VideoPlayerErrorHandlerState
                         ),
                       ],
                     ),
-                      child: ElevatedButton(
+                    child: ElevatedButton(
                       onPressed: _retryPlayback,
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.transparent,

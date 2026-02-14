@@ -7,7 +7,6 @@ import 'package:photo_manager/photo_manager.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 import 'file_browser_service.dart';
-import 'thumbnail_service.dart';
 import 'scan_directory_service.dart';
 import '../core/video_player_controller.dart';
 
@@ -84,19 +83,6 @@ class VideoScannerService {
 
     // Save to cache
     await saveVideosToCache(videos);
-
-    // Generate thumbnails in background for video files
-    if (videos.isNotEmpty) {
-      final videoPaths = videos
-          .where((v) => v.type == MediaType.video)
-          .map((v) => v.path)
-          .toList();
-      if (videoPaths.isNotEmpty) {
-        ThumbnailService.generateThumbnailsBatch(videoPaths).catchError((e) {
-          debugPrint('Error generating thumbnails: $e');
-        });
-      }
-    }
 
     return videos;
   }
@@ -288,20 +274,15 @@ class VideoScannerService {
       for (final asset in assets) {
         final file = await asset.file;
         if (file == null) continue;
-        try {
-          final stat = await file.stat();
-          allVideos.add(
-            VideoFile(
-              path: file.path,
-              name: file.uri.pathSegments.last,
-              size: stat.size,
-              lastModified: stat.modified,
-              type: MediaType.video,
-            ),
-          );
-        } catch (_) {
-          // Ignore files we can't stat
-        }
+        allVideos.add(
+          VideoFile(
+            path: file.path,
+            name: asset.title ?? file.uri.pathSegments.last,
+            size: await file.length(),
+            lastModified: asset.modifiedDateTime,
+            type: MediaType.video,
+          ),
+        );
       }
       // Yield to UI thread between pages to avoid long startup stalls.
       await Future.delayed(const Duration(milliseconds: 4));

@@ -107,5 +107,23 @@ class SystemControlsService {
     }
   }
 
+  static Future<bool> requestAudioFocus() async {
+    try {
+      return await _channel.invokeMethod('requestAudioFocus') ?? false;
+    } catch (e) {
+      debugPrint('Error requesting audio focus: $e');
+      return false;
+    }
+  }
+
+  static Future<bool> abandonAudioFocus() async {
+    try {
+      return await _channel.invokeMethod('abandonAudioFocus') ?? false;
+    } catch (e) {
+      debugPrint('Error abandoning audio focus: $e');
+      return false;
+    }
+  }
+
   static bool get isInitialized => _isInitialized;
 }

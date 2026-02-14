@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../services/file_browser_service.dart';
 import '../services/thumbnail_service.dart';
@@ -104,18 +105,6 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
         _isLoading = false;
       });
 
-      final videoPaths = videoFiles
-          .where((v) => !v.isAudio && !v.isStreaming)
-          .map((v) => v.path)
-          .toList();
-      if (videoPaths.isNotEmpty) {
-        ThumbnailService.generateThumbnailsBatch(videoPaths);
-        Future.delayed(const Duration(milliseconds: 800), () {
-          if (mounted) {
-            setState(() {});
-          }
-        });
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -385,18 +374,29 @@ class _FileBrowserScreenState extends State<FileBrowserScreen> {
     }
 
     return Expanded(
-      child: ListView.builder(
-        controller: _scrollController,
-        cacheExtent: 600,
-        padding: const EdgeInsets.all(16),
-        itemCount: _filteredVideoFiles.length,
-        itemBuilder: (context, index) {
-          final videoFile = _filteredVideoFiles[index];
-          return VideoFileItem(
-            videoFile: videoFile,
-            onTap: () => _onVideoSelected(videoFile),
-          );
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification is UserScrollNotification) {
+            ThumbnailService.setPausedDebounced(
+              notification.direction != ScrollDirection.idle,
+            );
+          }
+          return false;
         },
+        child: ListView.builder(
+          controller: _scrollController,
+          cacheExtent: 600,
+          padding: const EdgeInsets.all(16),
+          itemCount: _filteredVideoFiles.length,
+          itemBuilder: (context, index) {
+            final videoFile = _filteredVideoFiles[index];
+            return VideoFileItem(
+              key: ValueKey(videoFile.path),
+              videoFile: videoFile,
+              onTap: () => _onVideoSelected(videoFile),
+            );
+          },
+        ),
       ),
     );
   }
